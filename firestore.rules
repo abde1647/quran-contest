@@ -1,0 +1,95 @@
+rules_version = '2';
+
+// مسابقة القرآن الكريم — صلاحيات قاعدة البيانات
+// admin   : مسؤول النشاط، وصول كامل.
+// teacher : أستاذ، يقرأ ويعدّل تلاميذ قسمه فقط، ولا يرى أي شيء آخر.
+service cloud.firestore {
+  match /databases/{db}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function me() { return /databases/$(db)/documents/users/$(request.auth.uid); }
+    function hasProfile() { return signedIn() && exists(me()); }
+    function profile() { return get(me()).data; }
+    function isAdmin() { return hasProfile() && profile().role == 'admin' && profile().active == true; }
+    function isTeacher() { return hasProfile() && profile().role == 'teacher' && profile().active == true; }
+    function teacherOf(section) { return isTeacher() && profile().section == section; }
+
+    function sections() {
+      return ['الرابعة ابتدائي','الخامسة ابتدائي','الأولى متوسط','الثانية متوسط',
+              'الثالثة متوسط','الرابعة متوسط','الأولى ثانوي','قسم القرآن'];
+    }
+    function mark(v) { return v == null || ((v is int || v is float) && v >= 0 && v <= 10); }
+    function validStudent(d) {
+      return d.keys().hasOnly(['section','name','hifz','tilawa','order','updatedAt','updatedBy','updatedByName'])
+        && d.keys().hasAll(['section','name','order','updatedAt','updatedBy'])
+        && d.section in sections()
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 80
+        && mark(d.get('hifz', null)) && mark(d.get('tilawa', null))
+        && (d.order is int || d.order is float)
+        && d.updatedBy == request.auth.uid
+        && d.updatedAt == request.time;
+    }
+
+    // أول من يُكمل الإعداد يصبح مسؤول النشاط، ثم يُقفل هذا الباب نهائياً.
+    match /config/admin {
+      // يكشف فقط هل تم الإعداد (لإظهار شاشة الإعداد الأول)، ولا يحتوي إلا معرّف المسؤول.
+      allow get: if true;
+      allow create: if signedIn()
+        && !exists(/databases/$(db)/documents/config/admin)
+        && request.resource.data.uid == request.auth.uid
+        && getAfter(me()).data.role == 'admin';
+      allow update, delete: if false;
+    }
+
+    match /users/{uid} {
+      allow get: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow list: if isAdmin();
+      // إنشاء حساب المسؤول الأول فقط (مع config/admin في نفس العملية)
+      allow create: if (signedIn() && request.auth.uid == uid
+                        && request.resource.data.role == 'admin'
+                        && request.resource.data.active == true
+                        && !exists(/databases/$(db)/documents/config/admin)
+                        && getAfter(/databases/$(db)/documents/config/admin).data.uid == uid)
+                    || (isAdmin() && request.resource.data.role == 'teacher'
+                        && request.resource.data.section in sections());
+      allow update: if isAdmin() && uid != request.auth.uid
+                    && request.resource.data.role == 'teacher'
+                    && request.resource.data.section in sections();
+      allow delete: if false;
+    }
+
+    // بطاقة الدخول: تحوّل اسم المستخدم إلى معرّف الحساب. قراءة مفردة فقط، دون سرد.
+    match /logins/{key} {
+      allow get: if true;
+      allow list: if false;
+      allow write: if isAdmin();
+    }
+
+    match /students/{id} {
+      allow read: if isAdmin() || teacherOf(resource.data.section);
+      allow create: if (isAdmin() || teacherOf(request.resource.data.section))
+                    && validStudent(request.resource.data);
+      allow update: if (isAdmin() || (teacherOf(resource.data.section)
+                         && request.resource.data.section == resource.data.section))
+                    && validStudent(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /settings/{doc} {
+      allow read, write: if isAdmin();
+    }
+
+    // سجل التعديلات: يكتب كل مستخدم سجله الخاص بقسمه، ولا يقرأه إلا المسؤول.
+    match /activity/{id} {
+      allow read: if isAdmin();
+      allow create: if (isAdmin() || teacherOf(request.resource.data.section))
+                    && request.resource.data.uid == request.auth.uid
+                    && request.resource.data.at == request.time;
+      allow update, delete: if false;
+    }
+
+    match /{other=**} {
+      allow read, write: if false;
+    }
+  }
+}
