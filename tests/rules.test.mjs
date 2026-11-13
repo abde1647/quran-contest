@@ -9,6 +9,8 @@ const anon=()=>env.unauthenticatedContext().firestore();
 let n=0;const ok=(name,p)=>test(name,()=>assertSucceeds(p()));const no=(name,p)=>test(name,()=>assertFails(p()));
 
 await env.clearFirestore();
+const DEFAULT=['الرابعة ابتدائي','الخامسة ابتدائي','الأولى متوسط','الثانية متوسط','الثالثة متوسط','الرابعة متوسط','الأولى ثانوي','قسم القرآن'];
+await env.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'config/sections'),{list:DEFAULT}));
 // bootstrap admin
 test('anyone can see whether setup is done', ()=>assertSucceeds(getDoc(doc(anon(),'config/admin'))));
 test('intruder cannot make himself admin without config lock', ()=>assertFails(setDoc(doc(db('x'),'users/x'),{role:'admin',active:true})));
@@ -53,5 +55,15 @@ ok('anonymous gets one login card',()=>getDoc(doc(anon(),'logins/ta')));
 no('teacher cannot write login cards',()=>setDoc(doc(db('tA'),'logins/ta'),{email:'evil@x.app'}));
 ok('admin deactivates teacher B',()=>updateDoc(doc(db('adm'),'users/tB'),{active:false}));
 no('deactivated teacher B loses access',()=>getDocs(query(collection(db('tB'),'students'),where('section','==',B))));
+ok('teacher reads section list',()=>getDoc(doc(db('tA'),'config/sections')));
+no('anonymous cannot read section list',()=>getDoc(doc(anon(),'config/sections')));
+no('teacher cannot change section list',()=>setDoc(doc(db('tA'),'config/sections'),{list:['x']}));
+no('admin cannot empty the section list',()=>setDoc(doc(db('adm'),'config/sections'),{list:[]}));
+no('student in an unlisted section rejected',()=>setDoc(doc(db('adm'),'students/n1'),st('adm','قسم جديد')));
+ok('admin adds a section',()=>setDoc(doc(db('adm'),'config/sections'),{list:[...DEFAULT,'قسم جديد']}));
+ok('student in the new section accepted',()=>setDoc(doc(db('adm'),'students/n1'),st('adm','قسم جديد')));
+ok('admin assigns teacher to the new section',()=>setDoc(doc(db('adm'),'users/tN'),{role:'teacher',active:true,section:'قسم جديد',name:'ن',username:'tn'}));
+ok('new-section teacher edits own student',()=>setDoc(doc(db('tN'),'students/n1'),st('tN','قسم جديد',{hifz:8})));
+no('new-section teacher cannot read section A',()=>getDocs(query(collection(db('tN'),'students'),where('section','==',A))));
 no('unknown collection blocked',()=>setDoc(doc(db('adm'),'other/x'),{a:1}));
 test.after(()=>env.cleanup());

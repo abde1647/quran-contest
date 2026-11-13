@@ -6,7 +6,7 @@ const LOGIN_DOMAIN = "quran-ikhlass.app";
 const SECTION_ROLES = { admin: "مسؤول النشاط", teacher: "أستاذ" };
 
 let auth = null, fs = null, me = null, unsubs = [], teachers = [], activity = [];
-let settingUp = false, adminExists = null, loginMode = "login";
+let settingUp = false, loggingOut = false, adminExists = null, loginMode = "login";
 
 function isAdmin() { return !!(me && me.role === "admin"); }
 function setStatus(t, err) { const s = $("#status"); s.textContent = t; s.classList.toggle("err", !!err); }
@@ -65,7 +65,7 @@ function boot() {
 }
 
 async function onAuth(user) {
-  if (settingUp) return;
+  if (settingUp || loggingOut) return;
   stopListeners(); me = null; loaded = false; students = []; teachers = []; activity = [];
   renderUserbox(); renderTabs();
   if (!user) { showLogin(); return; }
@@ -77,14 +77,31 @@ async function onAuth(user) {
   if (!p || p.active !== true) { await auth.signOut(); showLogin("هذا الحساب غير مفعّل. راجع مسؤول النشاط."); return; }
   me = { uid: user.uid, ...p };
   document.body.classList.remove("on-login");
-  if (isAdmin()) { if (!/^s\d$/.test(view) && !["dash", "results", "certs", "teachers", "log"].includes(view)) view = "dash"; }
+  if (isAdmin()) { if (!/^s\d+$/.test(view) && !["dash", "results", "certs", "teachers", "log", "sections"].includes(view)) view = "dash"; }
   else view = "s" + SECTIONS.indexOf(me.section);
   renderUserbox(); renderTabs(); render();
   startListeners();
 }
 
+function applySections(list) {
+  if (!Array.isArray(list) || !list.length) return;
+  if (list.join("\n") === SECTIONS.join("\n")) return;
+  SECTIONS.splice(0, SECTIONS.length, ...list);
+  if (certSec >= SECTIONS.length) certSec = 0;
+  renderTabs(); if (!busyTyping()) render();
+}
 function startListeners() {
   setStatus("جارٍ تحميل البيانات…");
+  unsubs.push(fs.doc("config/sections").onSnapshot(s => {
+    if (s.exists) applySections(s.data().list);
+    else if (isAdmin() && !s.metadata.fromCache && !sectionsInit) { sectionsInit = true; updateSections(l => l).catch(() => {}); }
+  }, () => {}));
+  if (!isAdmin()) unsubs.push(fs.doc("users/" + me.uid).onSnapshot(s => {
+    if (s.metadata.hasPendingWrites || s.metadata.fromCache) return; // only server-confirmed changes
+    const p = s.data();
+    if (!p || p.active !== true) { logout(); return; }
+    if (p.section !== me.section) location.reload(); // moved to another section by the admin
+  }, () => {}));
   const q = isAdmin() ? fs.collection("students") : fs.collection("students").where("section", "==", me.section);
   const timer = setTimeout(() => { if (!loaded) setStatus("الاتصال بطيء، ما زلنا نحاول…", true); }, 10000);
   unsubs.push(q.onSnapshot({ includeMetadataChanges: true }, snap => {
@@ -117,7 +134,9 @@ function busyTyping() { const a = document.activeElement; return !!(a && a.close
 function stopListeners() { unsubs.forEach(u => { try { u(); } catch (e) {} }); unsubs = []; settingsDoc = null; }
 
 async function logout() {
-  stopListeners(); setStatus("جارٍ تسجيل الخروج…");
+  if (loggingOut) return;
+  loggingOut = true; stopListeners(); setStatus("جارٍ تسجيل الخروج…");
+  $("#view").innerHTML = `<div class="empty">جارٍ تسجيل الخروج…</div>`;
   try { await fs.waitForPendingWrites(); } catch (e) {}
   await auth.signOut();
   try { await fs.terminate(); await fs.clearPersistence(); } catch (e) {}
@@ -263,6 +282,7 @@ function describe(a) {
   if (a.action === "add") return `أضاف التلميذ <strong>${esc(a.student)}</strong>`;
   if (a.action === "delete") return `حذف التلميذ <strong>${esc(a.student)}</strong>`;
   if (a.action === "import") return `استورد ${esc(a.student)}`;
+  if (a.action === "note") return esc(a.student);
   const c = (a.changes || []).map(x => `${FIELD[x.field] || esc(x.field)}: ${x.from ?? "—"} ← ${x.to ?? "—"}`).join("، ");
   return `عدّل <strong>${esc(a.student)}</strong> <span class="pend">(${esc(c)})</span>`;
 }
@@ -352,6 +372,83 @@ function bindTeachers(el) {
       } catch (e) { setStatus(errText(e), true); reset.disabled = false; }
     };
   });
+}
+
+/* ---------- admin: sections ---------- */
+let secBusy = false;
+function sectionsAdminHTML() {
+  const rows = SECTIONS.map((sec, i) => {
+    const n = students.filter(s => s.section === sec).length, t = sectionTeachers(sec).length;
+    return `<tr data-i="${i}"><td class="num pend">${i + 1}</td>
+      <td><input class="name" id="sn-${i}" value="${esc(sec)}" aria-label="اسم القسم" ${secBusy ? "disabled" : ""}></td>
+      <td class="num">${n}</td><td class="num">${t}</td>
+      <td><div class="actions">
+        <button class="btn ghost small" data-up ${i === 0 || secBusy ? "disabled" : ""} aria-label="تقديم">▲</button>
+        <button class="btn ghost small" data-down ${i === SECTIONS.length - 1 || secBusy ? "disabled" : ""} aria-label="تأخير">▼</button>
+        <button class="btn ghost small" data-rename ${secBusy ? "disabled" : ""}>حفظ الاسم</button>
+        ${n || t ? "" : `<button class="del" data-remove title="حذف القسم" aria-label="حذف القسم" ${secBusy ? "disabled" : ""}>✕</button>`}
+      </div></td></tr>`;
+  }).join("");
+  return `<div style="display:grid;gap:14px">
+  <div><h2>الأقسام</h2><p class="sub">تُطبَّق هذه القائمة على كل الصفحات وعلى صلاحيات قاعدة البيانات. لا يمكن حذف قسم فيه تلاميذ أو أستاذ مفعّل.</p></div>
+  <form class="panel" id="secForm"><h3>إضافة قسم</h3><div class="formgrid">
+    <label class="field">اسم القسم الجديد<input id="secNew" required maxlength="40" placeholder="مثال: الخامسة متوسط"></label>
+    <button class="btn" type="submit" ${secBusy ? "disabled" : ""}>إضافة القسم</button></div><p class="err" id="secErr" style="color:var(--warn);margin:0"></p></form>
+  <div class="tbl"><table><thead><tr><th class="num">#</th><th>القسم</th><th class="num">التلاميذ</th><th class="num">الأساتذة</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+  <p class="note">ورقة Excel لقسم جديد يجب أن تحمل نفس اسم القسم ليتم استيرادها.</p></div>`;
+}
+const cleanName = v => String(v || "").replace(/\s+/g, " ").trim().slice(0, 40);
+const DEFAULT_SECTIONS = [...SECTIONS];
+let sectionsInit = false;
+// every change re-reads the stored list inside a transaction, so concurrent edits can't overwrite each other
+async function updateSections(fn, msg) {
+  const ref = fs.doc("config/sections");
+  const list = await fs.runTransaction(async tx => {
+    const d = await tx.get(ref), stored = d.exists && Array.isArray(d.data().list) && d.data().list.length ? d.data().list : null;
+    const cur = stored || [...DEFAULT_SECTIONS], next = fn([...cur]);
+    if (!next || !next.length) throw new Error("يجب أن يبقى قسم واحد على الأقل");
+    if (stored && next.join("\n") === cur.join("\n")) return cur;
+    tx.set(ref, { list: next }); return next;
+  });
+  applySections(list); if (msg) setStatus(msg); return list;
+}
+function bindSectionsAdmin(el) {
+  const err = el.querySelector("#secErr");
+  el.querySelector("#secForm").onsubmit = async e => {
+    e.preventDefault(); const name = cleanName($("#secNew").value);
+    if (!name) return;
+    if (SECTIONS.includes(name)) { err.textContent = "هذا القسم موجود"; return; }
+    try { await updateSections(l => l.includes(name) ? l : [...l, name], "تمت إضافة القسم «" + name + "»"); } catch (x) { err.textContent = errText(x); }
+  };
+  el.querySelectorAll("tr[data-i]").forEach(tr => {
+    const i = +tr.dataset.i, sec = SECTIONS[i];
+    const move = d => updateSections(l => { const a = l.indexOf(sec), b = a + d; if (a < 0 || b < 0 || b >= l.length) return l; [l[a], l[b]] = [l[b], l[a]]; return l; }, "تم تغيير الترتيب").catch(x => setStatus(errText(x), true));
+    tr.querySelector("[data-up]").onclick = () => move(-1);
+    tr.querySelector("[data-down]").onclick = () => move(1);
+    const rm = tr.querySelector("[data-remove]");
+    if (rm) rm.onclick = () => {
+      if (!rm.classList.contains("confirm")) { rm.classList.add("confirm"); rm.textContent = "تأكيد الحذف"; return; }
+      updateSections(l => l.filter(s => s !== sec), "تم حذف القسم «" + sec + "»").catch(x => setStatus(errText(x), true));
+    };
+    tr.querySelector("[data-rename]").onclick = () => renameSection(sec, cleanName(tr.querySelector("input").value));
+  });
+}
+async function renameSection(from, to) {
+  if (!to || to === from) return;
+  if (SECTIONS.includes(to)) { setStatus("يوجد قسم بهذا الاسم", true); return; }
+  secBusy = true; render(); setStatus("جارٍ إعادة تسمية القسم…");
+  try {
+    // 1) add the new name next to the old one, 2) move students and teachers, 3) drop the old name
+    await updateSections(l => l.includes(to) ? l : l.flatMap(s => s === from ? [from, to] : [s]));
+    const ops = [
+      ...students.filter(s => s.section === from).map(s => b => b.update(fs.doc("students/" + s.id), { section: to, ...stamp() })),
+      ...teachers.filter(t => t.section === from).map(t => b => b.update(fs.doc("users/" + t.uid), { section: to }))];
+    for (let k = 0; k < ops.length; k += 400) { const b = fs.batch(); ops.slice(k, k + 400).forEach(f => f(b)); await b.commit(); }
+    await updateSections(l => l.filter(s => s !== from));
+    await fs.collection("activity").add(logEntry("الكل", "note", `أعاد تسمية القسم «${from}» إلى «${to}»`, []));
+    setStatus("تمت إعادة التسمية ✓");
+  } catch (x) { setStatus("توقفت إعادة التسمية: " + errText(x), true); }
+  secBusy = false; render();
 }
 
 /* ---------- admin: import Excel / backup into the central database ---------- */

@@ -41,10 +41,11 @@ function renderTabs(){
   t.hidden=false;
   if(!isAdmin()){ // a teacher sees only the section assigned to them
     const i=SECTIONS.indexOf(me.section);
+    if(i<0){t.innerHTML="";return}
     t.innerHTML=`<button class="main" data-v="s${i}" aria-selected="true">${esc(me.section)}</button>`;
     return;
   }
-  t.innerHTML=`<button class="main" data-v="dash">لوحة المتابعة</button><button class="main" data-v="results">النتائج النهائية</button><button class="main" data-v="certs">الشهادات</button><button class="main" data-v="teachers">الأساتذة</button><button class="main" data-v="log">سجل التعديلات</button><span class="sep"></span>`+
+  t.innerHTML=`<button class="main" data-v="dash">لوحة المتابعة</button><button class="main" data-v="results">النتائج النهائية</button><button class="main" data-v="certs">الشهادات</button><button class="main" data-v="teachers">الأساتذة</button><button class="main" data-v="sections">الأقسام</button><button class="main" data-v="log">سجل التعديلات</button><span class="sep"></span>`+
     SECTIONS.map((s,i)=>`<button data-v="s${i}">${esc(s)}</button>`).join("");
   t.querySelectorAll("button").forEach(b=>{b.setAttribute("role","tab");b.setAttribute("aria-selected",b.dataset.v===view);b.onclick=()=>go(b.dataset.v)});
 }
@@ -53,10 +54,15 @@ function go(v){view=v;try{localStorage.setItem("qc-view",v)}catch(e){}renderTabs
 function render(){
   const el=$("#view");
   if(!me||view==="mycode"){return}
-  if(!isAdmin()) view="s"+SECTIONS.indexOf(me.section);
+  if(!isAdmin()){
+    const i=SECTIONS.indexOf(me.section);
+    if(i<0){el.innerHTML=`<div class="empty">جارٍ تحميل القسم…</div>`;return}
+    view="s"+i;
+  }
   if(!loaded){el.innerHTML=`<div class="empty">جارٍ تحميل قوائم التلاميذ…</div>`;return}
   if(view==="teachers"){el.innerHTML=teachersHTML();bindTeachers(el);return}
   if(view==="log"){el.innerHTML=logHTML();return}
+  if(view==="sections"){el.innerHTML=sectionsAdminHTML();bindSectionsAdmin(el);return}
   if(view==="dash") el.innerHTML=dashHTML();
   else if(view==="results") el.innerHTML=resultsHTML();
   else if(view==="certs"){el.innerHTML=certsHTML();bindCerts()}

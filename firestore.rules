@@ -14,9 +14,9 @@ service cloud.firestore {
     function isTeacher() { return hasProfile() && profile().role == 'teacher' && profile().active == true; }
     function teacherOf(section) { return isTeacher() && profile().section == section; }
 
+    // قائمة الأقسام يحددها مسؤول النشاط في config/sections
     function sections() {
-      return ['الرابعة ابتدائي','الخامسة ابتدائي','الأولى متوسط','الثانية متوسط',
-              'الثالثة متوسط','الرابعة متوسط','الأولى ثانوي','قسم القرآن'];
+      return get(/databases/$(db)/documents/config/sections).data.list;
     }
     function mark(v) { return v == null || ((v is int || v is float) && v >= 0 && v <= 10); }
     function validStudent(d) {
@@ -39,6 +39,15 @@ service cloud.firestore {
         && request.resource.data.uid == request.auth.uid
         && getAfter(me()).data.role == 'admin';
       allow update, delete: if false;
+    }
+
+    match /config/sections {
+      allow get: if signedIn();
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['list'])
+        && request.resource.data.list is list
+        && request.resource.data.list.size() >= 1 && request.resource.data.list.size() <= 40;
+      allow delete: if false;
     }
 
     match /users/{uid} {
