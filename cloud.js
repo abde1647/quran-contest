@@ -167,7 +167,6 @@ async function showLogin(msg) {
     <p class="eyebrow">مدرسة الإخلاص القرآنية</p>
     <h1>مسابقة القرآن الكريم السنوية</h1>
     <p class="hadith">«خيرُكم من تعلَّم القرآنَ وعلَّمه»</p>
-    <ul class="facts"><li><b>8</b> أقسام</li><li><b>20</b> نقطة: الحفظ والتلاوة</li><li><b>3</b> فائزين في كل قسم</li></ul>
   </section>
   <div class="panel login">
     <h3>${setup ? "الإعداد الأول: حساب مسؤول النشاط" : "تسجيل الدخول"}</h3>
