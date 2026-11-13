@@ -76,6 +76,7 @@ async function onAuth(user) {
   const p = snap.exists ? snap.data() : null;
   if (!p || p.active !== true) { await auth.signOut(); showLogin("هذا الحساب غير مفعّل. راجع مسؤول النشاط."); return; }
   me = { uid: user.uid, ...p };
+  document.body.classList.remove("on-login");
   if (isAdmin()) { if (!/^s\d$/.test(view) && !["dash", "results", "certs", "teachers", "log"].includes(view)) view = "dash"; }
   else view = "s" + SECTIONS.indexOf(me.section);
   renderUserbox(); renderTabs(); render();
@@ -159,7 +160,16 @@ async function showLogin(msg) {
   }
   if (!adminExists) loginMode = "setup";
   const setup = loginMode === "setup";
-  $("#view").innerHTML = `<div class="panel login">
+  document.body.classList.add("on-login");
+  $("#view").innerHTML = `<div class="front">
+  <section class="hero">
+    <img src="${LOGO}" alt="شعار مدرسة الإخلاص القرآنية">
+    <p class="eyebrow">مدرسة الإخلاص القرآنية</p>
+    <h1>مسابقة القرآن الكريم السنوية</h1>
+    <p class="hadith">«خيرُكم من تعلَّم القرآنَ وعلَّمه»</p>
+    <ul class="facts"><li><b>8</b> أقسام</li><li><b>20</b> نقطة: الحفظ والتلاوة</li><li><b>3</b> فائزين في كل قسم</li></ul>
+  </section>
+  <div class="panel login">
     <h3>${setup ? "الإعداد الأول: حساب مسؤول النشاط" : "تسجيل الدخول"}</h3>
     <p class="note">${setup ? "يتم هذا مرة واحدة فقط. صاحب هذا الحساب يتحكم في كل الأقسام ويُنشئ حسابات الأساتذة." : "أدخل اسم المستخدم ورمز الدخول اللذين أعطاك إياهما مسؤول النشاط."}</p>
     <form id="lgForm">
@@ -168,7 +178,8 @@ async function showLogin(msg) {
       <label class="field">رمز الدخول<input id="lgCode" type="password" required ${setup ? 'minlength="6" autocomplete="new-password"' : 'autocomplete="current-password"'}></label>
       <p class="err" id="lgErr">${esc(msg || "")}</p>
       <button class="btn" type="submit" id="lgBtn">${setup ? "إنشاء حساب المسؤول" : "دخول"}</button>
-    </form></div>`;
+    </form></div>
+  <p class="foot">خاص بأساتذة المدرسة ومسؤول النشاط. لا تملك حساباً؟ اطلبه من مسؤول النشاط.</p></div>`;
   $("#lgForm").onsubmit = e => { e.preventDefault(); setup ? doSetup() : doLogin(); };
 }
 async function doLogin() {
