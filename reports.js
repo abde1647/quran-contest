@@ -111,3 +111,74 @@ function bindReports(el) {
     if (document.activeElement !== q && !("ontouchstart" in window)) q.focus();
   }
 }
+
+/* ---------- student evaluation card (reads marks and rank; never changes them) ---------- */
+// grade wording from the total /20, as on Algerian school reports
+function appreciation(t) {
+  if (t == null) return null;
+  if (t >= 18) return "ممتاز";
+  if (t >= 16) return "جيد جداً";
+  if (t >= 14) return "جيد";
+  if (t >= 12) return "مستحسن";
+  if (t >= 10) return "مقبول";
+  return "يحتاج إلى مزيد من الجهد";
+}
+function cardData(id) {
+  const s = students.find(x => x.id === id); if (!s || !SECTIONS.includes(s.section)) return null;
+  return { ...s, ...ranked(s.section).find(x => x.id === id) };
+}
+function sectionTeacherNames(sec) {
+  if (isAdmin() || isViewer()) return sectionTeachers(sec).map(t => t.name).join("، ");
+  return me && me.section === sec ? me.name : "";
+}
+function canEditSection(sec) { return isAdmin() || (!isViewer() && me && me.section === sec); }
+function cardHTML(r, editable) {
+  const sec = r.section, n = ranked(sec).filter(x => x.name).length, app = appreciation(r.total);
+  return `<article class="stcard">
+  <header class="sc-head"><img src="${LOGO}" alt="شعار المدرسة"><div><p class="sc-school">${esc(certSettings.org || "مدرسة الإخلاص القرآنية")}</p><h3>بطاقة تقييم التلميذ</h3><p class="sc-contest">مسابقة القرآن الكريم السنوية</p></div></header>
+  <dl class="sc-id"><div><dt>التلميذ</dt><dd>${esc(r.name)}</dd></div><div><dt>القسم</dt><dd>${esc(sec)}</dd></div></dl>
+  <table class="sc-marks"><thead><tr><th>المعيار</th><th class="num">العلامة</th></tr></thead><tbody>
+    <tr><td>الحفظ</td><td class="num"><span dir="ltr">${fmt(r.hifz)} / 10</span></td></tr>
+    <tr><td>التلاوة والتجويد</td><td class="num"><span dir="ltr">${fmt(r.tilawa)} / 10</span></td></tr>
+    <tr class="sc-total"><td>المجموع</td><td class="num"><span dir="ltr">${fmt(r.total)} / 20</span></td></tr></tbody></table>
+  <div class="sc-result">
+    <div><span>الترتيب في القسم</span><strong>${r.rank ? `${r.rank} من ${n}` : "—"}</strong>${r.rank ? `<span class="pill p${r.rank <= 3 ? r.rank : 0}">${noteFor(r.rank)}</span>` : ""}</div>
+    <div><span>التقدير</span><strong>${app || '<span class="pend">بانتظار العلامات</span>'}</strong></div>
+  </div>
+  <div class="sc-note"><span>ملاحظة الأستاذ</span>${editable
+    ? `<textarea id="noteBox" maxlength="400" rows="3" placeholder="مثال: حفظ متقن، يحتاج إلى العناية بأحكام المدود.">${esc(r.note || "")}</textarea>
+       <div class="actions noprint"><button class="btn small" id="noteSave" type="button">حفظ الملاحظة</button><span class="pend" id="noteCount">${(r.note || "").length}/400</span></div>
+       <p class="sc-note-print">${r.note ? esc(r.note) : ""}</p>`
+    : `<p>${r.note ? esc(r.note) : '<span class="pend">لا توجد ملاحظة.</span>'}</p>`}</div>
+  <footer class="sc-foot"><div><span>أستاذ القسم</span><b>${esc(sectionTeacherNames(sec)) || "&nbsp;"}</b></div>
+    <div><span>${esc(certSettings.signerTitle || "مدير المسابقة")}</span><b>${esc(certSettings.signer || "") || "&nbsp;"}</b></div>
+    <div><span>التاريخ</span><b>${esc(certSettings.date || todayAr())}</b></div></footer>
+</article>`;
+}
+function cardViewHTML(r) {
+  const i = SECTIONS.indexOf(r.section);
+  return `<div style="display:grid;gap:14px">
+  <div class="row-actions noprint"><button class="btn ghost small" data-go="s${i}" type="button">→ رجوع إلى ${esc(r.section)}</button>
+    <div class="actions">${printBtn()}<button class="btn ghost small" data-go="cards-${i}" type="button">📄 بطاقات القسم كلها</button></div></div>
+  ${cardHTML(r, canEditSection(r.section))}</div>`;
+}
+function cardsViewHTML(i) {
+  const sec = SECTIONS[i], rows = ranked(sec).filter(r => r.name)
+    .sort((a, b) => (a.rank ?? 999) - (b.rank ?? 999) || a.order - b.order).map(r => ({ ...r, section: sec }));
+  return `<div style="display:grid;gap:14px">
+  <div class="row-actions noprint"><div><h2>بطاقات تقييم: ${esc(sec)}</h2><p class="sub">${rows.length} بطاقة، كل بطاقة في صفحة عند الطباعة.</p></div>
+    <div class="actions">${printBtn()}<button class="btn ghost small" data-go="s${i}" type="button">→ رجوع إلى القسم</button></div></div>
+  ${rows.length ? rows.map(r => cardHTML(r, false)).join("") : '<p class="empty">لا يوجد تلاميذ في هذا القسم.</p>'}</div>`;
+}
+function bindCard(el, r) {
+  const box = el.querySelector("#noteBox"), save = el.querySelector("#noteSave"), count = el.querySelector("#noteCount");
+  if (!box) return;
+  box.oninput = () => { count.textContent = box.value.length + "/400"; };
+  save.onclick = async () => {
+    const note = box.value.replace(/\s+$/g, "").slice(0, 400);
+    if (note === (r.note || "")) { notify("لا يوجد تغيير في الملاحظة"); return; }
+    save.disabled = true; box.blur();
+    await saveField(r.id, { note });
+    notify("تم حفظ الملاحظة"); save.disabled = false;
+  };
+}

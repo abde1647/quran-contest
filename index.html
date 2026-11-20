@@ -4,7 +4,7 @@
 <style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font-size:14px;font-family:system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
 <title>مسابقة القرآن الكريم السنوية</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<link rel="stylesheet" href="fonts/fonts.css?v=8">
+<link rel="stylesheet" href="fonts/fonts.css?v=9">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
@@ -123,6 +123,31 @@ body.role-viewer .hbar,body.role-viewer .vbar{background:var(--viewer)}
 .vbar{position:absolute;inset-inline:18%;bottom:0;background:var(--accent);border-radius:4px 4px 0 0;min-height:2px}
 .vv{font-weight:600;font-variant-numeric:tabular-nums}
 .vl{font-size:.78rem;color:var(--muted);direction:ltr;font-variant-numeric:tabular-nums}
+/* student evaluation card */
+.rowbtns{display:flex;gap:4px;align-items:center;justify-content:flex-end}
+.cardbtn{position:relative;padding:3px 9px}
+.cardbtn .dot{position:absolute;top:3px;inset-inline-end:3px;width:7px;height:7px;border-radius:50%;background:var(--gold)}
+.stcard{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:20px;display:grid;gap:14px;max-width:720px;width:100%;margin-inline:auto}
+.sc-head{display:flex;align-items:center;gap:14px;border-bottom:2px solid var(--accent);padding-bottom:12px}
+.sc-head img{height:58px;width:auto;background:#fff;border-radius:8px;padding:3px 6px}
+.sc-head h3{margin:0;font-family:var(--display);font-size:1.5rem}
+.sc-school{margin:0;color:var(--accent);font-weight:600;font-size:.9rem}
+.sc-contest{margin:0;color:var(--muted);font-size:.85rem}
+.sc-id{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0}
+.sc-id div{background:var(--sunk);border-radius:8px;padding:8px 12px;min-width:0}
+.sc-id dt{font-size:.78rem;color:var(--muted)}.sc-id dd{margin:0;font-weight:700;font-size:1.05rem;overflow-wrap:anywhere}
+.sc-marks{border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.sc-total td{font-weight:700;background:var(--accent-soft)}
+.sc-result{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.sc-result>div{border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:grid;gap:4px;justify-items:start}
+.sc-result span:first-child,.sc-note>span,.sc-foot span{font-size:.78rem;color:var(--muted)}
+.sc-result strong{font-size:1.25rem;font-family:var(--display)}
+.sc-note{display:grid;gap:6px}.sc-note p{margin:0;min-height:2.4em;border:1px dashed var(--line);border-radius:8px;padding:8px 12px}
+.sc-note textarea{font:inherit;width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:var(--bg);color:var(--ink);resize:vertical}
+.sc-note-print{display:none}
+.sc-foot{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;border-top:1px solid var(--line);padding-top:12px}
+.sc-foot div{display:grid;gap:18px}.sc-foot b{font-weight:600;border-bottom:1px dotted var(--muted);padding-bottom:2px;min-height:1.4em}
+@media (max-width:520px){.sc-foot{grid-template-columns:1fr 1fr}.sc-head img{height:46px}}
 @media print{
   body{background:#fff;color:#000}
   .noprint,#tabs,.side,#toast,.btn,form,.del,.ro-badge small{display:none!important}
@@ -130,6 +155,8 @@ body.role-viewer .hbar,body.role-viewer .vbar{background:var(--viewer)}
   .wrap{max-width:none;padding:0}
   .hbar,.vbar{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   tr.clickable{cursor:default}
+  .stcard{break-after:page;border-color:#999;max-width:none}
+  .sc-note textarea{display:none}.sc-note-print{display:block}
 }
 .btn:disabled{opacity:.5;cursor:default}
 .podium{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
@@ -231,10 +258,10 @@ body.on-login header.mast,body.on-login #tabs{display:none}
 <script src="lib/firebase-app-compat.js"></script>
 <script src="lib/firebase-auth-compat.js"></script>
 <script src="lib/firebase-firestore-compat.js"></script>
-<script src="firebase-config.js?v=8"></script>
-<script src="core.js?v=8"></script>
-<script src="reports.js?v=8"></script>
-<script src="cloud.js?v=8"></script>
+<script src="firebase-config.js?v=9"></script>
+<script src="core.js?v=9"></script>
+<script src="reports.js?v=9"></script>
+<script src="cloud.js?v=9"></script>
 
 
 </body></html>

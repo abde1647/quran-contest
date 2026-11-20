@@ -93,5 +93,11 @@ ok('admin soft-deletes a teacher',()=>updateDoc(doc(db('adm'),'users/tN'),{activ
 no('soft-deleted teacher loses access',()=>getDocs(query(collection(db('tN'),'students'),where('section','==','قسم جديد'))));
 ok('admin deactivates the viewer',()=>updateDoc(doc(db('adm'),'users/v1'),{active:false}));
 no('deactivated viewer loses read access',()=>getDocs(collection(db('v1'),'students')));
+// ---- remarks on students ----
+ok('teacher writes a remark in own section',()=>setDoc(doc(db('tA'),'students/s1'),st('tA',A,{note:'حفظ متقن، يحتاج إلى تحسين المدود'})));
+no('remark longer than 400 characters rejected',()=>setDoc(doc(db('tA'),'students/s1'),st('tA',A,{note:'x'.repeat(401)})));
+no('remark must be text',()=>setDoc(doc(db('tA'),'students/s1'),st('tA',A,{note:5})));
+no('teacher cannot write a remark in another section',()=>setDoc(doc(db('tA'),'students/s2'),st('tA',B,{note:'x'})));
+ok('admin writes a remark anywhere',()=>setDoc(doc(db('adm'),'students/s2'),st('adm',B,{note:'ممتاز'})));
 no('unknown collection blocked',()=>setDoc(doc(db('adm'),'other/x'),{a:1}));
 test.after(()=>env.cleanup());

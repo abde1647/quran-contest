@@ -65,10 +65,17 @@ function render(){
   if(!isAdmin()&&!isViewer()){
     const i=SECTIONS.indexOf(me.section);
     if(i<0){el.innerHTML=`<div class="empty">جارٍ تحميل القسم…</div>`;return}
-    view="s"+i;
+    if(!allowedView(view)) view="s"+i;
   }
   if(!allowedView(view)) view=homeView(); // e.g. a viewer opening #teachers directly
   if(!loaded){el.innerHTML=`<div class="empty">جارٍ تحميل قوائم التلاميذ…</div>`;return}
+  if(view.startsWith("card-")||view.startsWith("cards-")){
+    const one=view.startsWith("card-"), r=one?cardData(view.slice(5)):null;
+    if(one&&!r){view=homeView();return render()} // unknown student, or one from another section
+    el.innerHTML=one?cardViewHTML(r):cardsViewHTML(+view.slice(6));
+    el.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>go(b.dataset.go));
+    bindReports(el); if(one) bindCard(el,r); return;
+  }
   if(view==="top"||view==="stats"||view==="search"){
     el.innerHTML=view==="top"?topHTML():view==="stats"?statsHTML():searchHTML();
     el.querySelectorAll("[data-go]").forEach(r=>r.onclick=()=>go(r.dataset.go));
@@ -82,6 +89,7 @@ function render(){
   else if(view==="certs"){el.innerHTML=certsHTML();bindCerts()}
   else {const i=+view.slice(1); if(!SECTIONS[i]){view="dash";return render()} el.innerHTML=sectionHTML(i); bindSection(i)}
   el.querySelectorAll("[data-go]").forEach(r=>r.onclick=()=>go(r.dataset.go));
+  el.querySelectorAll("[data-card]").forEach(b=>b.onclick=()=>go("card-"+b.dataset.card));
   el.querySelectorAll("[data-cert]").forEach(b=>b.onclick=()=>{certSec=+b.dataset.cert;certFilter="win";certSel=null;go("certs")});
   const ex=el.querySelector("#export"); if(ex) ex.onclick=exportCSV;
   bindReports(el);
@@ -117,7 +125,7 @@ function sectionHTML(i){
   const sec=SECTIONS[i], rows=ranked(sec), st=stats(sec);
   const podium=[1,2,3].map(k=>{const r=st.top[k-1];return `<div><small class="p${k}">${["🥇","🥈","🥉"][k-1]} ${PLACE[k]}</small><strong>${r?esc(r.name):"—"}</strong><em>${r?r.total+" /20":"لم يُحدد بعد"}</em></div>`}).join("");
   return `<div style="display:grid;gap:14px">
-  <div class="row-actions"><div><h2>${esc(sec)}</h2><p class="sub">${st.count} مشارك · ${st.scored} بعلامات كاملة · أعلى علامة ${st.max}/20</p></div>${isViewer()?printBtn():""}</div>
+  <div class="row-actions"><div><h2>${esc(sec)}</h2><p class="sub">${st.count} مشارك · ${st.scored} بعلامات كاملة · أعلى علامة ${st.max}/20</p></div><div class="actions noprint">${isViewer()?printBtn():""}<button class="btn ghost small" data-go="cards-${i}" type="button">📄 بطاقات التقييم</button></div></div>
   <div class="podium">${podium}</div>
   <div class="tbl"><table>
     <thead><tr><th class="num">#</th><th>اسم التلميذ</th><th class="num">الحفظ /10</th><th class="num">التلاوة والتجويد /10</th><th class="num">المجموع /20</th><th class="num">الترتيب</th><th>ملاحظة</th><th></th></tr></thead>
@@ -130,7 +138,7 @@ function sectionHTML(i){
       <td class="num"><strong>${r.total??'<span class="pend">—</span>'}</strong></td>
       <td class="num">${r.rank??'<span class="pend">—</span>'}</td>
       <td>${r.rank?`<span class="pill p${r.rank<=3?r.rank:0}">${noteFor(r.rank)}</span>`:'<span class="pend">بانتظار العلامات</span>'}</td>
-      <td>${isAdmin()?`<button class="del" data-del="${r.id}" title="حذف التلميذ" aria-label="حذف">✕</button>`:""}</td>
+      <td><div class="rowbtns"><button class="btn ghost small cardbtn" data-card="${r.id}" type="button" title="بطاقة التقييم والملاحظة" aria-label="بطاقة تقييم ${esc(r.name)}">📄${r.note?'<i class="dot" aria-hidden="true"></i>':""}</button>${isAdmin()?`<button class="del" data-del="${r.id}" title="حذف التلميذ" aria-label="حذف">✕</button>`:""}</div></td>
     </tr>`).join(""):`<tr><td colspan="8" class="empty">لا يوجد تلاميذ في هذا القسم بعد.${canWrite?" أضف أول تلميذ من النموذج أدناه.":""}</td></tr>`}</tbody>
   </table></div>
   ${canWrite?`<form class="add" id="addForm">

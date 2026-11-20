@@ -18,6 +18,8 @@ function allowedView(v) {
   if (!me) return false;
   if (/^s\d+$/.test(v)) return isAdmin() || isViewer() ? !!SECTIONS[+v.slice(1)] : v === "s" + SECTIONS.indexOf(me.section);
   if (v === "mycode") return isAdmin();
+  if (/^card-[A-Za-z0-9_-]+$/.test(v)) return true; // the student must also be in this user's list (checked when shown)
+  if (/^cards-\d+$/.test(v)) { const i = +v.slice(6); return !!SECTIONS[i] && (isAdmin() || isViewer() || SECTIONS[i] === me.section); }
   return (isAdmin() ? ADMIN_VIEWS : isViewer() ? VIEWER_VIEWS : []).includes(v);
 }
 function homeView() { return isAdmin() || isViewer() ? "dash" : "s" + SECTIONS.indexOf(me.section); }
@@ -155,8 +157,8 @@ function startListeners() {
     setStatus(snap.metadata.hasPendingWrites ? "محفوظ في الجهاز، بانتظار المزامنة…" : snap.metadata.fromCache ? "دون اتصال: تُحفظ التعديلات وتُرسل عند عودة الإنترنت" : "محفوظ ومتزامن ✓");
     if (snap.metadata.hasPendingWrites && !first && snap.docChanges().length === 0) return;
     const a = document.activeElement;
-    if (!first && a && a.id && a.closest && a.closest("#view") && a.matches("input,select")) {
-      if (a.matches("input[data-c]")) return;
+    if (!first && a && a.id && a.closest && a.closest("#view") && a.matches("input,select,textarea")) {
+      if (a.matches("input[data-c]") || a.matches("textarea")) return;
       const id = a.id; render(); const n = document.getElementById(id); if (n) n.focus();
     } else render();
   }, e => { clearTimeout(timer); setStatus("تعذر تحميل البيانات: " + errText(e), true); }));
@@ -175,7 +177,7 @@ function startListeners() {
     if (s.exists) { Object.assign(certSettings, s.data()); if (view === "certs" && !busyTyping()) render(); }
   }, () => {}));
 }
-function busyTyping() { const a = document.activeElement; return !!(a && a.closest && a.closest("#view") && a.matches("input,select")); }
+function busyTyping() { const a = document.activeElement; return !!(a && a.closest && a.closest("#view") && a.matches("input,select,textarea")); }
 function stopListeners() { unsubs.forEach(u => { try { u(); } catch (e) {} }); unsubs = []; settingsDoc = null; }
 
 async function logout() {
@@ -359,13 +361,13 @@ function progressHTML() {
 }
 
 /* ---------- admin: activity log ---------- */
-const FIELD = { hifz: "الحفظ", tilawa: "التلاوة", name: "الاسم" };
+const FIELD = { hifz: "الحفظ", tilawa: "التلاوة", name: "الاسم", note: "الملاحظة" };
 function describe(a) {
   if (a.action === "add") return `أضاف التلميذ <strong>${esc(a.student)}</strong>`;
   if (a.action === "delete") return `حذف التلميذ <strong>${esc(a.student)}</strong>`;
   if (a.action === "import") return `استورد ${esc(a.student)}`;
   if (a.action === "note") return esc(a.student);
-  const c = (a.changes || []).map(x => `${FIELD[x.field] || esc(x.field)}: ${x.from ?? "—"} ← ${x.to ?? "—"}`).join("، ");
+  const c = (a.changes || []).map(x => x.field === "note" ? "كتب ملاحظة" : `${FIELD[x.field] || esc(x.field)}: ${x.from ?? "—"} ← ${x.to ?? "—"}`).join("، ");
   return `عدّل <strong>${esc(a.student)}</strong> <span class="pend">(${esc(c)})</span>`;
 }
 function logHTML() {
@@ -664,7 +666,7 @@ function bindData(el) {
   if (q("#dpExcel")) q("#dpExcel").onclick = () => { fileWant = "excel"; fi.accept = ".xlsx,.xls"; fi.click(); };
   if (q("#bkImport")) q("#bkImport").onclick = () => { fileWant = "backup"; fi.accept = ".json,application/json"; fi.click(); };
   if (q("#bkExport")) q("#bkExport").onclick = async () => {
-    const clean = students.map(s => ({ id: s.id, section: s.section, name: s.name, hifz: s.hifz ?? null, tilawa: s.tilawa ?? null, order: s.order, updatedByName: s.updatedByName || "", updatedAt: toDate(s.updatedAt)?.toISOString() || null }));
+    const clean = students.map(s => ({ id: s.id, section: s.section, name: s.name, hifz: s.hifz ?? null, tilawa: s.tilawa ?? null, note: s.note || "", order: s.order, updatedByName: s.updatedByName || "", updatedAt: toDate(s.updatedAt)?.toISOString() || null }));
     const blob = new Blob([JSON.stringify({ app: "quran-contest", version: 2, savedAt: new Date().toISOString(), students: clean, cert: certSettings }, null, 1)], { type: "application/json" });
     try { await appSave({ filename: `نسخة-مسابقة-القرآن-${new Date().toISOString().slice(0, 10)}.json`, data: blob }); setStatus("تم حفظ النسخة الاحتياطية"); } catch (e) { setStatus("لم يتم الحفظ", true); }
   };
@@ -691,7 +693,7 @@ function readBackup(text) {
   let o; try { o = JSON.parse(text); } catch (e) { o = null; }
   if (!o || o.app !== "quran-contest" || !Array.isArray(o.students)) throw new Error("هذا الملف ليس نسخة احتياطية من التطبيق");
   const st = o.students.filter(s => s && typeof s.name === "string" && s.name.trim() && SECTIONS.includes(s.section))
-    .map((s, i) => ({ section: s.section, name: s.name.trim().slice(0, 80), hifz: num(s.hifz), tilawa: num(s.tilawa), order: typeof s.order === "number" ? s.order : i + 1 }));
+    .map((s, i) => ({ section: s.section, name: s.name.trim().slice(0, 80), hifz: num(s.hifz), tilawa: num(s.tilawa), ...(typeof s.note === "string" && s.note ? { note: s.note.slice(0, 400) } : {}), order: typeof s.order === "number" ? s.order : i + 1 }));
   pending = { what: "نسخة احتياطية", students: st, cert: o.cert && typeof o.cert === "object" ? o.cert : null, label: `نسخة احتياطية فيها ${st.length} تلميذ. اضغط «تأكيد» لحفظها في قاعدة البيانات.` };
   render();
 }

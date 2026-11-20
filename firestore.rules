@@ -28,11 +28,12 @@ service cloud.firestore {
     }
     function mark(v) { return v == null || ((v is int || v is float) && v >= 0 && v <= 10); }
     function validStudent(d) {
-      return d.keys().hasOnly(['section','name','hifz','tilawa','order','updatedAt','updatedBy','updatedByName'])
+      return d.keys().hasOnly(['section','name','hifz','tilawa','order','note','updatedAt','updatedBy','updatedByName'])
         && d.keys().hasAll(['section','name','order','updatedAt','updatedBy'])
         && d.section in sections()
         && d.name is string && d.name.size() > 0 && d.name.size() <= 80
         && mark(d.get('hifz', null)) && mark(d.get('tilawa', null))
+        && (d.get('note', '') is string && d.get('note', '').size() <= 400)
         && (d.order is int || d.order is float)
         && d.updatedBy == request.auth.uid
         && d.updatedAt == request.time;
