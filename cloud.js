@@ -182,6 +182,31 @@ async function logout() {
   location.reload();
 }
 
+
+/* show / hide button for every code field: same look in every browser and phone */
+const EYE_OPEN = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
+const EYE_SHUT = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3 3l18 18M10.6 5.1A10.8 10.8 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.2M6.6 6.6C3.9 8.4 2 12 2 12s3.6 7 10 7a10 10 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
+function addEyes(root) {
+  root.querySelectorAll('input[type="password"]').forEach(inp => {
+    if (inp.parentElement.classList.contains("pw")) return;
+    const wrap = document.createElement("span"); wrap.className = "pw";
+    inp.replaceWith(wrap); wrap.appendChild(inp);
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "eye"; b.innerHTML = EYE_OPEN;
+    b.setAttribute("aria-label", "إظهار الرمز"); b.setAttribute("aria-pressed", "false"); b.title = "إظهار الرمز";
+    b.onclick = e => {
+      e.preventDefault();
+      const show = inp.type === "password";
+      inp.type = show ? "text" : "password";
+      b.innerHTML = show ? EYE_SHUT : EYE_OPEN;
+      b.setAttribute("aria-pressed", String(show));
+      b.title = show ? "إخفاء الرمز" : "إظهار الرمز"; b.setAttribute("aria-label", b.title);
+      inp.focus(); const n = inp.value.length; try { inp.setSelectionRange(n, n); } catch (x) {}
+    };
+    wrap.appendChild(b);
+  });
+}
+
 /* ---------- header ---------- */
 function renderUserbox() {
   const b = $("#userbox"), badge = $("#roBadge");
@@ -201,6 +226,7 @@ function showMyCode() {
     <label class="field">الرمز الجديد<input id="mcNew" type="password" minlength="8" required autocomplete="new-password"></label>
     <label class="field">تأكيد الرمز الجديد<input id="mcNew2" type="password" minlength="8" required autocomplete="new-password"></label>
     <p class="err" id="mcErr"></p><div class="actions"><button class="btn" type="submit" id="mcBtn">حفظ الرمز الجديد</button><button class="btn ghost" type="button" id="mcBack">رجوع</button></div></form></div>`;
+  addEyes($("#view"));
   $("#mcBack").onclick = () => go("dash");
   $("#mcForm").onsubmit = async e => {
     e.preventDefault();
@@ -247,6 +273,7 @@ async function showLogin(msg) {
       <button class="btn" type="submit" id="lgBtn">${setup ? "إنشاء حساب المسؤول" : "دخول"}</button>
     </form></div>
   <p class="foot">خاص بمدير المسابقة والمعلمين ومسؤول المدرسة. لا تملك حساباً؟ اطلبه من مدير المسابقة.</p></div>`;
+  addEyes($("#view"));
   $("#lgForm").onsubmit = e => { e.preventDefault(); setup ? doSetup() : doLogin(); };
 }
 async function doLogin() {
