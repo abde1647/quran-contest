@@ -83,7 +83,13 @@ async function appSave({ filename, data }) {
 function boot() {
   document.getElementById("mastLogo").src = LOGO;
   dl = { save: appSave };
-  if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+  if ("serviceWorker" in navigator && location.protocol === "https:") {
+    // when a new version is published, the page reloads once onto it
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => { if (hadController && !reloaded && !busyTyping()) { reloaded = true; location.reload(); } });
+    navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(r => r.update()).catch(() => {});
+  }
   if (!CFG || !window.firebase) {
     setStatus("قاعدة البيانات غير مربوطة", true);
     $("#view").innerHTML = `<div class="panel login"><h3>لم يتم ربط قاعدة البيانات بعد</h3><p class="note">يحتاج التطبيق إلى إعدادات مشروع Firebase في الملف firebase-config.js.</p></div>`;
