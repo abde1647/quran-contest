@@ -1,8 +1,9 @@
 rules_version = '2';
 
 // مسابقة القرآن الكريم — صلاحيات قاعدة البيانات
-// admin   : مسؤول النشاط، وصول كامل.
-// teacher : أستاذ، يقرأ ويعدّل تلاميذ قسمه فقط، ولا يرى أي شيء آخر.
+// admin               : مدير المسابقة، وصول كامل.
+// teacher             : أستاذ، يقرأ ويعدّل تلاميذ قسمه فقط، ولا يرى أي شيء آخر.
+// school_admin_viewer : مسؤول المدرسة، يقرأ كل شيء ولا يكتب أي شيء.
 service cloud.firestore {
   match /databases/{db}/documents {
 
@@ -13,10 +14,17 @@ service cloud.firestore {
     function isAdmin() { return hasProfile() && profile().role == 'admin' && profile().active == true; }
     function isTeacher() { return hasProfile() && profile().role == 'teacher' && profile().active == true; }
     function teacherOf(section) { return isTeacher() && profile().section == section; }
+    function isViewer() { return hasProfile() && profile().role == 'school_admin_viewer' && profile().active == true; }
+    function canReadAll() { return isAdmin() || isViewer(); }
 
     // قائمة الأقسام يحددها مسؤول النشاط في config/sections
     function sections() {
       return get(/databases/$(db)/documents/config/sections).data.list;
+    }
+    // حساب يُنشئه المدير: أستاذ مرتبط بقسم موجود، أو مسؤول مدرسة (دون قسم)
+    function validMember(d) {
+      return (d.role == 'teacher' && d.section in sections())
+          || (d.role == 'school_admin_viewer' && !d.keys().hasAny(['section']));
     }
     function mark(v) { return v == null || ((v is int || v is float) && v >= 0 && v <= 10); }
     function validStudent(d) {
@@ -51,19 +59,19 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      allow get: if isAdmin() || (signedIn() && request.auth.uid == uid);
-      allow list: if isAdmin();
+      allow get: if canReadAll() || (signedIn() && request.auth.uid == uid);
+      allow list: if canReadAll();
       // إنشاء حساب المسؤول الأول فقط (مع config/admin في نفس العملية)
       allow create: if (signedIn() && request.auth.uid == uid
                         && request.resource.data.role == 'admin'
                         && request.resource.data.active == true
                         && !exists(/databases/$(db)/documents/config/admin)
                         && getAfter(/databases/$(db)/documents/config/admin).data.uid == uid)
-                    || (isAdmin() && request.resource.data.role == 'teacher'
-                        && request.resource.data.section in sections());
+                    || (isAdmin() && validMember(request.resource.data));
+      // لا يُعدَّل حساب المدير من هنا، ولا يمكن ترقية أي حساب إلى مدير
       allow update: if isAdmin() && uid != request.auth.uid
-                    && request.resource.data.role == 'teacher'
-                    && request.resource.data.section in sections();
+                    && resource.data.role == request.resource.data.role
+                    && validMember(request.resource.data);
       allow delete: if false;
     }
 
@@ -75,7 +83,7 @@ service cloud.firestore {
     }
 
     match /students/{id} {
-      allow read: if isAdmin() || teacherOf(resource.data.section);
+      allow read: if canReadAll() || teacherOf(resource.data.section);
       allow create: if (isAdmin() || teacherOf(request.resource.data.section))
                     && validStudent(request.resource.data);
       allow update: if (isAdmin() || (teacherOf(resource.data.section)
@@ -85,12 +93,13 @@ service cloud.firestore {
     }
 
     match /settings/{doc} {
-      allow read, write: if isAdmin();
+      allow read: if canReadAll();
+      allow write: if isAdmin();
     }
 
-    // سجل التعديلات: يكتب كل مستخدم سجله الخاص بقسمه، ولا يقرأه إلا المسؤول.
+    // سجل التعديلات: يكتب كل مستخدم سجله الخاص بقسمه، ويقرأه المدير ومسؤول المدرسة.
     match /activity/{id} {
-      allow read: if isAdmin();
+      allow read: if canReadAll();
       allow create: if (isAdmin() || teacherOf(request.resource.data.section))
                     && request.resource.data.uid == request.auth.uid
                     && request.resource.data.at == request.time;

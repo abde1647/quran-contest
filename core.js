@@ -39,27 +39,41 @@ function renderTabs(){
   const t=$("#tabs");
   if(!me){t.hidden=true;t.innerHTML="";return}
   t.hidden=false;
-  if(!isAdmin()){ // a teacher sees only the section assigned to them
+  if(!isAdmin()&&!isViewer()){ // a teacher sees only the section assigned to them
     const i=SECTIONS.indexOf(me.section);
     if(i<0){t.innerHTML="";return}
     t.innerHTML=`<button class="main" data-v="s${i}" aria-selected="true">${esc(me.section)}</button>`;
     return;
   }
-  t.innerHTML=`<button class="main" data-v="dash">لوحة المتابعة</button><button class="main" data-v="results">النتائج النهائية</button><button class="main" data-v="certs">الشهادات</button><button class="main" data-v="teachers">الأساتذة</button><button class="main" data-v="sections">الأقسام</button><button class="main" data-v="log">سجل التعديلات</button><span class="sep"></span>`+
+  const common=`<button class="main" data-v="dash">${isViewer()?"لوحة النتائج":"لوحة المتابعة"}</button><button class="main" data-v="results">النتائج النهائية</button><button class="main" data-v="top">المتفوقون</button><button class="main" data-v="stats">الإحصائيات</button><button class="main" data-v="search">بحث</button><button class="main" data-v="certs">الشهادات</button>`;
+  const admin=isAdmin()?`<button class="main" data-v="teachers">إدارة المعلمين</button><button class="main" data-v="sections">الأقسام</button>`:"";
+  t.innerHTML=common+admin+`<button class="main" data-v="log">سجل التعديلات</button><span class="sep"></span>`+
     SECTIONS.map((s,i)=>`<button data-v="s${i}">${esc(s)}</button>`).join("");
   t.querySelectorAll("button").forEach(b=>{b.setAttribute("role","tab");b.setAttribute("aria-selected",b.dataset.v===view);b.onclick=()=>go(b.dataset.v)});
 }
-function go(v){view=v;try{localStorage.setItem("qc-view",v)}catch(e){}renderTabs();render();window.scrollTo({top:0})}
+function go(v){
+  if(me&&!allowedView(v)) v=homeView();
+  view=v;try{localStorage.setItem("qc-view",v)}catch(e){}
+  try{history.replaceState(null,"","#"+v)}catch(e){}
+  renderTabs();render();window.scrollTo({top:0});
+}
 
 function render(){
   const el=$("#view");
-  if(!me||view==="mycode"){return}
-  if(!isAdmin()){
+  if(!me){return}
+  if(view==="mycode"){ if(isAdmin()) return; view=homeView(); }
+  if(!isAdmin()&&!isViewer()){
     const i=SECTIONS.indexOf(me.section);
     if(i<0){el.innerHTML=`<div class="empty">جارٍ تحميل القسم…</div>`;return}
     view="s"+i;
   }
+  if(!allowedView(view)) view=homeView(); // e.g. a viewer opening #teachers directly
   if(!loaded){el.innerHTML=`<div class="empty">جارٍ تحميل قوائم التلاميذ…</div>`;return}
+  if(view==="top"||view==="stats"||view==="search"){
+    el.innerHTML=view==="top"?topHTML():view==="stats"?statsHTML():searchHTML();
+    el.querySelectorAll("[data-go]").forEach(r=>r.onclick=()=>go(r.dataset.go));
+    bindReports(el);return;
+  }
   if(view==="teachers"){el.innerHTML=teachersHTML();bindTeachers(el);return}
   if(view==="log"){el.innerHTML=logHTML();return}
   if(view==="sections"){el.innerHTML=sectionsAdminHTML();bindSectionsAdmin(el);return}
@@ -70,6 +84,7 @@ function render(){
   el.querySelectorAll("[data-go]").forEach(r=>r.onclick=()=>go(r.dataset.go));
   el.querySelectorAll("[data-cert]").forEach(b=>b.onclick=()=>{certSec=+b.dataset.cert;certFilter="win";certSel=null;go("certs")});
   const ex=el.querySelector("#export"); if(ex) ex.onclick=exportCSV;
+  bindReports(el);
   if(typeof bindData==="function") bindData(el);
 }
 
@@ -78,8 +93,8 @@ function dashHTML(){
   const sum=k=>all.reduce((a,s)=>a+s[k],0);
   const best=Math.max(0,...all.map(s=>s.max));
   return `<div style="display:grid;gap:16px">
-  <div><h2>لوحة مسؤول النشاط</h2><p class="sub">إحصائيات المشاركين والنتائج حسب الأقسام. اضغط على قسم لفتحه.</p></div>
-  ${isAdmin()?progressHTML()+dataPanelHTML():""}
+  <div class="row-actions"><div><h2>${isViewer()?"لوحة النتائج":"لوحة مدير المسابقة"}</h2><p class="sub">إحصائيات المشاركين والنتائج حسب الأقسام. اضغط على قسم لفتحه.</p></div>${printBtn()}</div>
+  ${isAdmin()?progressHTML()+dataPanelHTML():isViewer()?progressHTML():""}
   <div class="kpis">
     <div class="kpi"><b>${sum("count")}</b><span>مجموع المشاركين</span></div>
     <div class="kpi"><b>${sum("scored")}</b><span>تلاميذ لديهم علامات كاملة</span></div>
@@ -94,29 +109,29 @@ function dashHTML(){
       <td class="num">${s.avg==null?"–":s.avg.toFixed(1)}</td>
       <td>${s.top[0]?esc(s.top[0].name):'<span class="pend">—</span>'}</td></tr>`).join("")}</tbody>
   </table></div>
-  <p class="note">طريقة الاستخدام: افتح القسم، أدخل اسم التلميذ وعلامتي الحفظ والتلاوة. المجموع والترتيب والملاحظة والنتائج النهائية والإحصائيات تُحدّث تلقائياً.</p>
+  ${isViewer()?"":`<p class="note noprint">طريقة الاستخدام: افتح القسم، أدخل اسم التلميذ وعلامتي الحفظ والتلاوة. المجموع والترتيب والملاحظة والنتائج النهائية والإحصائيات تُحدّث تلقائياً.</p>`}
   </div>`;
 }
 
 function sectionHTML(i){
   const sec=SECTIONS[i], rows=ranked(sec), st=stats(sec);
-  const dis=canWrite?"":"disabled";
   const podium=[1,2,3].map(k=>{const r=st.top[k-1];return `<div><small class="p${k}">${["🥇","🥈","🥉"][k-1]} ${PLACE[k]}</small><strong>${r?esc(r.name):"—"}</strong><em>${r?r.total+" /20":"لم يُحدد بعد"}</em></div>`}).join("");
   return `<div style="display:grid;gap:14px">
-  <div class="row-actions"><div><h2>${esc(sec)}</h2><p class="sub">${st.count} مشارك · ${st.scored} بعلامات كاملة · أعلى علامة ${st.max}/20</p></div></div>
+  <div class="row-actions"><div><h2>${esc(sec)}</h2><p class="sub">${st.count} مشارك · ${st.scored} بعلامات كاملة · أعلى علامة ${st.max}/20</p></div>${isViewer()?printBtn():""}</div>
   <div class="podium">${podium}</div>
   <div class="tbl"><table>
     <thead><tr><th class="num">#</th><th>اسم التلميذ</th><th class="num">الحفظ /10</th><th class="num">التلاوة والتجويد /10</th><th class="num">المجموع /20</th><th class="num">الترتيب</th><th>ملاحظة</th><th></th></tr></thead>
     <tbody>${rows.length?rows.map((r,n)=>`<tr data-id="${r.id}">
       <td class="num pend">${n+1}</td>
-      <td><input class="name" id="n-${r.id}" data-f="name" value="${esc(r.name)}" ${dis} aria-label="اسم التلميذ"></td>
-      <td class="num"><input class="mark" id="h-${r.id}" data-f="hifz" type="number" min="0" max="10" step="0.25" inputmode="decimal" value="${isNum(r.hifz)?r.hifz:""}" ${dis} aria-label="الحفظ"></td>
-      <td class="num"><input class="mark" id="t-${r.id}" data-f="tilawa" type="number" min="0" max="10" step="0.25" inputmode="decimal" value="${isNum(r.tilawa)?r.tilawa:""}" ${dis} aria-label="التلاوة والتجويد"></td>
+      ${canWrite?`<td><input class="name" id="n-${r.id}" data-f="name" value="${esc(r.name)}" aria-label="اسم التلميذ"></td>
+      <td class="num"><input class="mark" id="h-${r.id}" data-f="hifz" type="number" min="0" max="10" step="0.25" inputmode="decimal" value="${isNum(r.hifz)?r.hifz:""}" aria-label="الحفظ"></td>
+      <td class="num"><input class="mark" id="t-${r.id}" data-f="tilawa" type="number" min="0" max="10" step="0.25" inputmode="decimal" value="${isNum(r.tilawa)?r.tilawa:""}" aria-label="التلاوة والتجويد"></td>`
+      :`<td><strong>${esc(r.name)}</strong></td><td class="num">${isNum(r.hifz)?r.hifz:'<span class="pend">—</span>'}</td><td class="num">${isNum(r.tilawa)?r.tilawa:'<span class="pend">—</span>'}</td>`}
       <td class="num"><strong>${r.total??'<span class="pend">—</span>'}</strong></td>
       <td class="num">${r.rank??'<span class="pend">—</span>'}</td>
       <td>${r.rank?`<span class="pill p${r.rank<=3?r.rank:0}">${noteFor(r.rank)}</span>`:'<span class="pend">بانتظار العلامات</span>'}</td>
       <td>${isAdmin()?`<button class="del" data-del="${r.id}" title="حذف التلميذ" aria-label="حذف">✕</button>`:""}</td>
-    </tr>`).join(""):`<tr><td colspan="8" class="empty">لا يوجد تلاميذ في هذا القسم بعد. أضف أول تلميذ من النموذج أدناه.</td></tr>`}</tbody>
+    </tr>`).join(""):`<tr><td colspan="8" class="empty">لا يوجد تلاميذ في هذا القسم بعد.${canWrite?" أضف أول تلميذ من النموذج أدناه.":""}</td></tr>`}</tbody>
   </table></div>
   ${canWrite?`<form class="add" id="addForm">
     <label class="grow">اسم التلميذ<input id="addName" required autocomplete="off" placeholder="الاسم واللقب"></label>
@@ -158,7 +173,7 @@ function bindSection(i){
 function resultsHTML(){
   return `<div style="display:grid;gap:16px">
   <div class="row-actions"><div><h2>النتائج النهائية</h2><p class="sub">الفائزون الثلاثة الأوائل في كل قسم</p></div>
-  <button class="btn ghost" id="export" ${dl?"":"hidden"}>تنزيل النتائج (CSV)</button></div>
+  <div class="actions noprint">${printBtn()}<button class="btn ghost small" id="export" ${dl?"":"hidden"}>تنزيل النتائج (CSV)</button></div></div>
   <div class="honour">${SECTIONS.map((sec,i)=>{const st=stats(sec);return `<div class="card">
     <h3>${esc(sec)}</h3>
     <ol>${[1,2,3].map(k=>{const r=st.top[k-1];return `<li><span class="pill p${k}">${PLACE[k]}</span><span class="n">${r?esc(r.name):'<span class="pend">—</span>'}</span><span class="s">${r?`${r.hifz} + ${r.tilawa} = <strong>${r.total}</strong>`:""}</span></li>`}).join("")}</ol>

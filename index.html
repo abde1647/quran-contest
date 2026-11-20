@@ -19,7 +19,7 @@
   --ink:#1b2a26; --muted:#5d6b66;
   --accent:#0f5c4d; --accent-soft:#e0eee9; --on-accent:#ffffff;
   --gold:#a8791c; --silver:#6f7a80; --bronze:#9a5a32;
-  --warn:#b04a2f;
+  --warn:#b04a2f; --viewer:#2c5a86; --viewer-soft:#e4edf6; --ok:#1d7a4f;
   --display:"Amiri", "Traditional Arabic", serif;
   --body:"IBM Plex Sans Arabic", "Segoe UI", Tahoma, sans-serif;
 }
@@ -27,12 +27,12 @@
   --bg:#111816; --surface:#18211e; --sunk:#0d1311; --line:#2a3632;
   --ink:#e6ece9; --muted:#9aa9a3;
   --accent:#4fb59c; --accent-soft:#1a3029; --on-accent:#08201a;
-  --gold:#e0b04f; --silver:#b4bec3; --bronze:#d38a5c; --warn:#ef8a6e; color-scheme:dark}}
+  --gold:#e0b04f; --silver:#b4bec3; --bronze:#d38a5c; --warn:#ef8a6e; --viewer:#8bb8e6; --viewer-soft:#18283a; --ok:#5cc58f; color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#111816; --surface:#18211e; --sunk:#0d1311; --line:#2a3632;
   --ink:#e6ece9; --muted:#9aa9a3;
   --accent:#4fb59c; --accent-soft:#1a3029; --on-accent:#08201a;
-  --gold:#e0b04f; --silver:#b4bec3; --bronze:#d38a5c; --warn:#ef8a6e; color-scheme:dark}
+  --gold:#e0b04f; --silver:#b4bec3; --bronze:#d38a5c; --warn:#ef8a6e; --viewer:#8bb8e6; --viewer-soft:#18283a; --ok:#5cc58f; color-scheme:dark}
 *{box-sizing:border-box}
 body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.6}
 .wrap{max-width:1040px;margin:0 auto;padding-block:20px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:20px}
@@ -81,6 +81,56 @@ form.add input{font:inherit;padding:7px 9px;border:1px solid var(--line);border-
 form.add input[type=number]{width:90px}
 .btn{font:inherit;font-weight:600;padding:8px 16px;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);cursor:pointer}
 .btn.ghost{background:transparent;color:var(--accent)}
+.btn.danger{background:var(--warn);border-color:var(--warn);color:#fff}
+.btn.dangerish{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 50%,transparent)}
+.actions.icons{flex-wrap:wrap;gap:6px}
+.inline-edit{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.inline-edit input{font:inherit;padding:5px 8px;border:1px solid var(--accent);border-radius:6px;background:var(--bg);color:var(--ink);min-width:140px}
+.panel.created{border-color:var(--accent);background:var(--accent-soft)}
+.panel.confirmbox{border-color:var(--warn);background:color-mix(in srgb,var(--warn) 9%,var(--surface))}
+.panel.viewerpanel{border-color:color-mix(in srgb,var(--viewer) 45%,var(--line))}
+.err{color:var(--warn);margin:0;min-height:1.2em;font-size:.9rem}
+.kpi .of{font-size:.9rem;color:var(--muted)}
+.rh{margin:8px 0 6px;font-size:1rem}
+.searchbox input{font-size:1.05rem;padding:10px 12px}
+/* read-only school viewer: same identity, blue accent strip and a permanent badge */
+.ro-badge{display:flex;align-items:center;gap:8px;justify-content:center;flex-wrap:wrap;text-align:center;font-weight:700;font-size:.92rem;
+  color:var(--viewer);background:var(--viewer-soft);border:1px solid color-mix(in srgb,var(--viewer) 40%,transparent);border-radius:10px;padding:8px 12px}
+.ro-badge small{font-weight:600;letter-spacing:.06em}
+body.role-viewer header.mast{border-bottom-color:var(--viewer)}
+body.role-viewer nav.tabs button[aria-selected="true"]{background:var(--viewer);border-color:var(--viewer)}
+/* toast */
+#toast{position:fixed;inset-inline:0;bottom:calc(16px + env(safe-area-inset-bottom,0px));margin:0 auto;width:max-content;max-width:calc(100% - 32px);
+  padding:10px 16px;border-radius:10px;font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.18);opacity:0;transform:translateY(12px);pointer-events:none;transition:.2s;z-index:50;background:var(--surface);color:var(--ink);border:1px solid var(--line)}
+#toast.show{opacity:1;transform:none}
+#toast.ok{border-color:var(--ok)}#toast.bad{border-color:var(--warn);color:var(--warn)}
+/* charts: one series, one hue, value labels, recessive grid */
+.chart h3{margin:0 0 6px}
+.hchart{display:grid;gap:8px}
+.hrow{display:grid;grid-template-columns:minmax(84px,130px) 1fr 42px;align-items:center;gap:10px;cursor:pointer}
+.hrow.axis{cursor:default;height:18px}
+.hl{font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.htrack{position:relative;height:16px}
+.htrack .tick{position:absolute;top:-4px;bottom:-4px;width:1px;background:var(--line)}
+.htrack b{position:absolute;top:0;transform:translateX(50%);font-size:.72rem;color:var(--muted);font-weight:400;font-variant-numeric:tabular-nums}
+.hbar{position:absolute;inset-block:2px;inset-inline-start:0;background:var(--accent);border-start-end-radius:4px;border-end-end-radius:4px;min-width:2px}
+body.role-viewer .hbar,body.role-viewer .vbar{background:var(--viewer)}
+.hrow:hover .hl{color:var(--accent)}
+.hv{font-variant-numeric:tabular-nums;font-weight:600;font-size:.9rem}
+.vchart{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;align-items:end;height:220px;padding-top:6px}
+.vcol{display:grid;grid-template-rows:auto 1fr auto;height:100%;text-align:center;gap:4px}
+.vtrack{position:relative;border-bottom:1px solid var(--line)}
+.vbar{position:absolute;inset-inline:18%;bottom:0;background:var(--accent);border-radius:4px 4px 0 0;min-height:2px}
+.vv{font-weight:600;font-variant-numeric:tabular-nums}
+.vl{font-size:.78rem;color:var(--muted);direction:ltr;font-variant-numeric:tabular-nums}
+@media print{
+  body{background:#fff;color:#000}
+  .noprint,#tabs,.side,#toast,.btn,form,.del,.ro-badge small{display:none!important}
+  .panel,.tbl,.kpi,.card{box-shadow:none;break-inside:avoid;border-color:#bbb}
+  .wrap{max-width:none;padding:0}
+  .hbar,.vbar{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  tr.clickable{cursor:default}
+}
 .btn:disabled{opacity:.5;cursor:default}
 .podium{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 .podium div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-width:0}
@@ -162,6 +212,7 @@ body.on-login header.mast,body.on-login #tabs{display:none}
     </div></div>
     <div class="side"><div class="userbox" id="userbox" hidden></div><div class="status" id="status">جارٍ تحميل البيانات…</div></div>
   </header>
+  <div class="ro-badge" id="roBadge" hidden>👁 مسؤول المدرسة — وضع المشاهدة فقط <small>(READ ONLY)</small></div>
   <div class="banner" id="banner" hidden></div>
   <nav class="tabs" id="tabs" role="tablist"></nav>
   <main id="view"></main>
@@ -174,6 +225,7 @@ body.on-login header.mast,body.on-login #tabs{display:none}
 <script src="lib/firebase-firestore-compat.js"></script>
 <script src="firebase-config.js"></script>
 <script src="core.js"></script>
+<script src="reports.js"></script>
 <script src="cloud.js"></script>
 
 

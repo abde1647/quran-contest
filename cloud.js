@@ -3,17 +3,49 @@
 const CFG = window.FIREBASE_CONFIG;
 const TS = () => firebase.firestore.FieldValue.serverTimestamp();
 const LOGIN_DOMAIN = "quran-ikhlass.app";
-const SECTION_ROLES = { admin: "مسؤول النشاط", teacher: "أستاذ" };
+const ROLE_VIEWER = "school_admin_viewer";
+const ROLE_LABEL = { admin: "مدير المسابقة", teacher: "أستاذ", [ROLE_VIEWER]: "مسؤول المدرسة" };
 
-let auth = null, fs = null, me = null, unsubs = [], teachers = [], activity = [];
+let auth = null, fs = null, me = null, unsubs = [], teachers = [], viewers = [], allUsers = [], activity = [];
 let settingUp = false, loggingOut = false, adminExists = null, loginMode = "login";
 
 function isAdmin() { return !!(me && me.role === "admin"); }
+function isViewer() { return !!(me && me.role === ROLE_VIEWER); }
+const ADMIN_VIEWS = ["dash", "results", "top", "stats", "search", "certs", "teachers", "sections", "log"];
+const VIEWER_VIEWS = ["dash", "results", "top", "stats", "search", "certs", "log"];
+// which screens each role may open; the database rules enforce the same limits on the server
+function allowedView(v) {
+  if (!me) return false;
+  if (/^s\d+$/.test(v)) return isAdmin() || isViewer() ? !!SECTIONS[+v.slice(1)] : v === "s" + SECTIONS.indexOf(me.section);
+  if (v === "mycode") return isAdmin();
+  return (isAdmin() ? ADMIN_VIEWS : isViewer() ? VIEWER_VIEWS : []).includes(v);
+}
+function homeView() { return isAdmin() || isViewer() ? "dash" : "s" + SECTIONS.indexOf(me.section); }
+function notify(msg, ok = true) {
+  setStatus(msg, !ok);
+  let t = document.getElementById("toast");
+  if (!t) { t = document.createElement("div"); t.id = "toast"; t.setAttribute("role", "status"); document.body.appendChild(t); }
+  t.textContent = (ok ? "✓ " : "⚠ ") + msg; t.className = ok ? "show ok" : "show bad";
+  clearTimeout(notify.timer); notify.timer = setTimeout(() => { t.className = ""; }, 3500);
+}
 function setStatus(t, err) { const s = $("#status"); s.textContent = t; s.classList.toggle("err", !!err); }
 function loginKey(u) { return String(u || "").trim().toLowerCase().replace(/\s+/g, "-"); }
 function validKey(k) { return /^[\p{L}\p{N}._-]{2,30}$/u.test(k); }
 function newEmail() { return "u" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7) + "@" + LOGIN_DOMAIN; }
-function randomCode() { const a = new Uint32Array(1); crypto.getRandomValues(a); return String(100000 + (a[0] % 900000)); }
+function randomCode() { const a = new Uint32Array(1); crypto.getRandomValues(a); return String(10000000 + (a[0] % 90000000)); }
+// rejects empty, short and easily guessed codes (codes themselves live only in Firebase Auth, hashed)
+function codeProblem(code, username, min = 6) {
+  const c = String(code || "");
+  if (!c.trim()) return "رمز الدخول فارغ";
+  if (/\s/.test(c)) return "رمز الدخول لا يحتوي على مسافات";
+  if (c.length < min) return `رمز الدخول يجب أن يكون ${min} أحرف أو أرقام على الأقل`;
+  if (/^(.)\1+$/.test(c)) return "رمز ضعيف: كل الخانات متشابهة";
+  const up = "01234567890123456789", down = "98765432109876543210";
+  if (/^\d+$/.test(c) && (up.includes(c) || down.includes(c))) return "رمز ضعيف: أرقام متتالية";
+  if (/^(password|azerty|qwerty|abcdef|abc123|motdepasse|admin|quran)\d*$/i.test(c)) return "رمز ضعيف وشائع";
+  if (username && username.length > 2 && c.toLowerCase().includes(String(username).toLowerCase())) return "لا تستعمل اسم المستخدم داخل الرمز";
+  return "";
+}
 function toDate(t) { return t && t.toDate ? t.toDate() : (t instanceof Date ? t : null); }
 function ago(t) {
   const d = toDate(t); if (!d) return "الآن";
@@ -76,9 +108,14 @@ async function onAuth(user) {
   const p = snap.exists ? snap.data() : null;
   if (!p || p.active !== true) { await auth.signOut(); showLogin("هذا الحساب غير مفعّل. راجع مسؤول النشاط."); return; }
   me = { uid: user.uid, ...p };
+  canWrite = !isViewer();
   document.body.classList.remove("on-login");
-  if (isAdmin()) { if (!/^s\d+$/.test(view) && !["dash", "results", "certs", "teachers", "log", "sections"].includes(view)) view = "dash"; }
-  else view = "s" + SECTIONS.indexOf(me.section);
+  document.body.classList.toggle("role-viewer", isViewer());
+  document.body.classList.toggle("role-admin", isAdmin());
+  const asked = decodeURIComponent(location.hash.slice(1));
+  if (asked && allowedView(asked)) view = asked;
+  if (!allowedView(view)) view = homeView();
+  try { history.replaceState(null, "", "#" + view); } catch (e) {}
   renderUserbox(); renderTabs(); render();
   startListeners();
 }
@@ -99,10 +136,11 @@ function startListeners() {
   if (!isAdmin()) unsubs.push(fs.doc("users/" + me.uid).onSnapshot(s => {
     if (s.metadata.hasPendingWrites || s.metadata.fromCache) return; // only server-confirmed changes
     const p = s.data();
-    if (!p || p.active !== true) { logout(); return; }
-    if (p.section !== me.section) location.reload(); // moved to another section by the admin
+    if (!p || p.active !== true) { logout(); return; } // stopped or deleted by the manager
+    if (!isViewer() && p.section !== me.section) location.reload(); // moved to another section by the manager
+    if (p.name !== me.name) { me.name = p.name; renderUserbox(); }
   }, () => {}));
-  const q = isAdmin() ? fs.collection("students") : fs.collection("students").where("section", "==", me.section);
+  const q = isAdmin() || isViewer() ? fs.collection("students") : fs.collection("students").where("section", "==", me.section);
   const timer = setTimeout(() => { if (!loaded) setStatus("الاتصال بطيء، ما زلنا نحاول…", true); }, 10000);
   unsubs.push(q.onSnapshot({ includeMetadataChanges: true }, snap => {
     clearTimeout(timer);
@@ -116,10 +154,11 @@ function startListeners() {
       const id = a.id; render(); const n = document.getElementById(id); if (n) n.focus();
     } else render();
   }, e => { clearTimeout(timer); setStatus("تعذر تحميل البيانات: " + errText(e), true); }));
-  if (!isAdmin()) return;
+  if (!isAdmin() && !isViewer()) return;
   unsubs.push(fs.collection("users").onSnapshot(s => {
-    teachers = s.docs.map(d => ({ uid: d.id, ...d.data() })).filter(u => u.role === "teacher");
-    if (["teachers", "dash"].includes(view) && !busyTyping()) render();
+    allUsers = s.docs.map(d => ({ uid: d.id, ...d.data() }));
+    teachers = visibleMembers("teacher"); viewers = visibleMembers(ROLE_VIEWER);
+    if (["teachers", "dash", "search"].includes(view) && !busyTyping()) render();
   }, () => {}));
   unsubs.push(fs.collection("activity").orderBy("at", "desc").limit(150).onSnapshot(s => {
     activity = s.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -145,28 +184,38 @@ async function logout() {
 
 /* ---------- header ---------- */
 function renderUserbox() {
-  const b = $("#userbox");
+  const b = $("#userbox"), badge = $("#roBadge");
+  badge.hidden = !isViewer();
   if (!me) { b.hidden = true; b.innerHTML = ""; return; }
   b.hidden = false;
-  b.innerHTML = `<span class="who">${esc(me.name)}</span><span class="role">· ${isAdmin() ? SECTION_ROLES.admin : esc(me.section)}</span>
-    <button class="btn ghost small" id="ubCode">تغيير الرمز</button><button class="btn ghost small" id="ubOut">خروج</button>`;
+  b.innerHTML = `<span class="who">${esc(me.name)}</span><span class="role">· ${isAdmin() || isViewer() ? ROLE_LABEL[me.role] : esc(me.section)}</span>
+    ${isAdmin() ? `<button class="btn ghost small" id="ubCode">🔑 تغيير رمز الدخول</button>` : ""}<button class="btn ghost small" id="ubOut">خروج</button>`;
   $("#ubOut").onclick = logout;
-  $("#ubCode").onclick = () => { view = view === "mycode" ? (isAdmin() ? "dash" : "s" + SECTIONS.indexOf(me.section)) : "mycode"; showMyCode(); };
+  const c = $("#ubCode"); if (c) c.onclick = () => { if (view === "mycode") go("dash"); else { view = "mycode"; renderTabs(); showMyCode(); } };
 }
 function showMyCode() {
-  if (view !== "mycode") { renderTabs(); render(); return; }
-  $("#view").innerHTML = `<div class="panel login"><h3>تغيير رمز الدخول</h3>
+  if (view !== "mycode" || !isAdmin()) { go(homeView()); return; }
+  $("#view").innerHTML = `<div class="panel login"><h3>🔑 تغيير رمز الدخول</h3>
+    <p class="note">خاص بمدير المسابقة. الرمز الجديد 8 أحرف أو أرقام على الأقل، ويتوقف الرمز القديم فوراً.</p>
     <form id="mcForm"><label class="field">الرمز الحالي<input id="mcOld" type="password" required autocomplete="current-password"></label>
-    <label class="field">الرمز الجديد (6 أحرف أو أرقام على الأقل)<input id="mcNew" type="password" minlength="6" required autocomplete="new-password"></label>
-    <p class="err" id="mcErr"></p><div class="actions"><button class="btn" type="submit">حفظ الرمز الجديد</button><button class="btn ghost" type="button" id="mcBack">رجوع</button></div></form></div>`;
-  $("#mcBack").onclick = () => { view = isAdmin() ? "dash" : "s" + SECTIONS.indexOf(me.section); render(); };
+    <label class="field">الرمز الجديد<input id="mcNew" type="password" minlength="8" required autocomplete="new-password"></label>
+    <label class="field">تأكيد الرمز الجديد<input id="mcNew2" type="password" minlength="8" required autocomplete="new-password"></label>
+    <p class="err" id="mcErr"></p><div class="actions"><button class="btn" type="submit" id="mcBtn">حفظ الرمز الجديد</button><button class="btn ghost" type="button" id="mcBack">رجوع</button></div></form></div>`;
+  $("#mcBack").onclick = () => go("dash");
   $("#mcForm").onsubmit = async e => {
-    e.preventDefault(); const u = auth.currentUser;
+    e.preventDefault();
+    const u = auth.currentUser, oldC = $("#mcOld").value, n1 = $("#mcNew").value, n2 = $("#mcNew2").value, err = $("#mcErr"), btn = $("#mcBtn");
+    err.textContent = "";
+    const weak = codeProblem(n1, me.username, 8);
+    if (weak) { err.textContent = weak; return; }
+    if (n1 !== n2) { err.textContent = "الرمز الجديد وتأكيده غير متطابقين"; return; }
+    if (n1 === oldC) { err.textContent = "الرمز الجديد يجب أن يختلف عن الرمز الحالي"; return; }
+    btn.disabled = true;
     try {
-      await u.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(u.email, $("#mcOld").value));
-      await u.updatePassword($("#mcNew").value);
-      setStatus("تم تغيير رمز الدخول"); $("#mcBack").click();
-    } catch (err) { $("#mcErr").textContent = errText(err); }
+      await u.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(u.email, oldC));
+      await u.updatePassword(n1);
+      notify("تم تغيير رمز الدخول. الرمز القديم لم يعد صالحاً."); go("dash");
+    } catch (x) { err.textContent = /wrong-password|invalid-credential|invalid-login/.test(x.code || "") ? "الرمز الحالي غير صحيح" : errText(x); btn.disabled = false; }
   };
 }
 
@@ -189,7 +238,7 @@ async function showLogin(msg) {
   </section>
   <div class="panel login">
     <h3>${setup ? "الإعداد الأول: حساب مسؤول النشاط" : "تسجيل الدخول"}</h3>
-    <p class="note">${setup ? "يتم هذا مرة واحدة فقط. صاحب هذا الحساب يتحكم في كل الأقسام ويُنشئ حسابات الأساتذة." : "أدخل اسم المستخدم ورمز الدخول اللذين أعطاك إياهما مسؤول النشاط."}</p>
+    <p class="note">${setup ? "يتم هذا مرة واحدة فقط. صاحب هذا الحساب يتحكم في كل الأقسام ويُنشئ حسابات الأساتذة." : "أدخل اسم المستخدم ورمز الدخول اللذين أعطاك إياهما مدير المسابقة."}</p>
     <form id="lgForm">
       ${setup ? `<label class="field">الاسم الكامل<input id="lgName" required autocomplete="name"></label>` : ""}
       <label class="field">اسم المستخدم<input id="lgUser" required autocomplete="username" autocapitalize="none" spellcheck="false"></label>
@@ -197,7 +246,7 @@ async function showLogin(msg) {
       <p class="err" id="lgErr">${esc(msg || "")}</p>
       <button class="btn" type="submit" id="lgBtn">${setup ? "إنشاء حساب المسؤول" : "دخول"}</button>
     </form></div>
-  <p class="foot">خاص بأساتذة المدرسة ومسؤول النشاط. لا تملك حساباً؟ اطلبه من مسؤول النشاط.</p></div>`;
+  <p class="foot">خاص بمدير المسابقة والمعلمين ومسؤول المدرسة. لا تملك حساباً؟ اطلبه من مدير المسابقة.</p></div>`;
   $("#lgForm").onsubmit = e => { e.preventDefault(); setup ? doSetup() : doLogin(); };
 }
 async function doLogin() {
@@ -292,32 +341,75 @@ function logHTML() {
     <span><strong>${esc(a.name)}</strong> <span class="pend">· ${esc(a.section)}</span> — ${describe(a)}</span></li>`).join("") : '<li><span></span><span class="pend">لا توجد تعديلات بعد.</span></li>'}</ul></div></div>`;
 }
 
-/* ---------- admin: teachers ---------- */
-let lastCreated = null;
-function teachersHTML() {
-  const list = [...teachers].sort((a, b) => SECTIONS.indexOf(a.section) - SECTIONS.indexOf(b.section) || (a.active === b.active ? 0 : a.active ? -1 : 1));
-  return `<div style="display:grid;gap:14px">
-  <div><h2>الأساتذة</h2><p class="sub">لكل أستاذ اسم مستخدم ورمز دخول وقسم واحد. لا يرى الأستاذ إلا تلاميذ قسمه.</p></div>
-  ${lastCreated ? `<div class="panel" style="border-color:var(--accent);background:var(--accent-soft)"><h3>تم ${lastCreated.reset ? "تجديد رمز" : "إنشاء حساب"} ${esc(lastCreated.name)}</h3>
-    <p class="note">أعطِ الأستاذ هذه المعلومات. لن يظهر الرمز مرة أخرى.</p>
+/* ---------- admin: teachers & the school viewer account ---------- */
+// a deleted or replaced account stays in the database (history keeps its name) but is hidden and cannot sign in
+function visibleMembers(role) { return allUsers.filter(u => u.role === role && !u.deleted && !u.replacedBy); }
+const personKey = n => normalizeAr(n).replace(/\s+/g, " ");
+function nameTaken(name, exceptUid) { const k = personKey(name); return teachers.some(t => t.uid !== exceptUid && personKey(t.name) === k); }
+let lastCreated = null, showAdd = false, editUid = null, askDelete = null, memberBusy = false;
+
+function createdCardHTML() {
+  if (!lastCreated) return "";
+  return `<div class="panel created"><h3>✓ تم ${lastCreated.reset ? "تجديد رمز" : "إنشاء حساب"} ${esc(lastCreated.name)}</h3>
+    <p class="note">أعطِ صاحب الحساب هذه المعلومات. لن يظهر الرمز مرة أخرى.</p>
     <div>اسم المستخدم: <span class="code">${esc(lastCreated.username)}</span></div><div>رمز الدخول: <span class="code">${esc(lastCreated.code)}</span></div>
-    <div class="actions"><button class="btn ghost small" id="tcCopy">نسخ المعلومات</button><button class="btn ghost small" id="tcHide">تم</button></div></div>` : ""}
-  <form class="panel" id="tcForm"><h3>إضافة أستاذ</h3><div class="formgrid">
-    <label class="field">الاسم الكامل<input id="tcName" required></label>
+    <div class="actions"><button class="btn ghost small" id="tcCopy">📋 نسخ المعلومات</button><button class="btn ghost small" id="tcHide">تم</button></div></div>`;
+}
+function askDeleteHTML() {
+  if (!askDelete) return "";
+  const u = allUsers.find(x => x.uid === askDelete); if (!u) return "";
+  const viewer = u.role === ROLE_VIEWER;
+  return `<div class="panel confirmbox" role="alertdialog" aria-labelledby="cdT"><h3 id="cdT">🗑 حذف ${viewer ? "حساب مسؤول المدرسة" : "المعلم"} «${esc(u.name)}»؟</h3>
+    <p class="note">${viewer ? "لن يستطيع الدخول بعد الآن." : "يختفي من قائمة المعلمين ولا يستطيع الدخول بعد الآن. نتائج التلاميذ وعلاماتهم والأقسام وسجل التعديلات تبقى كما هي."}</p>
+    <div class="actions"><button class="btn danger" id="cdYes">نعم، احذف</button><button class="btn ghost" id="cdNo">إلغاء</button></div></div>`;
+}
+function memberRowHTML(t, viewer) {
+  const editing = editUid === t.uid, dis = memberBusy ? "disabled" : "";
+  return `<tr data-uid="${t.uid}">
+    <td>${editing ? `<div class="inline-edit"><input id="edName" value="${esc(t.name)}" aria-label="الاسم الجديد" maxlength="60">
+        <button class="btn small" data-act="save" ${dis}>حفظ</button><button class="btn ghost small" data-act="cancel">إلغاء</button></div>` : `<strong>${esc(t.name)}</strong>`}</td>
+    <td><span class="code" style="font-size:.9rem">${esc(t.username)}</span></td>
+    ${viewer ? "" : `<td>${t.active ? `<select data-sec aria-label="القسم" ${dis}>${SECTIONS.map(s => `<option ${s === t.section ? "selected" : ""}>${esc(s)}</option>`).join("")}${SECTIONS.includes(t.section) ? "" : `<option selected>${esc(t.section)}</option>`}</select>` : esc(t.section)}</td>`}
+    <td><span class="state ${t.active ? "on" : ""}">${t.active ? "مفعّل" : "موقوف"}</span></td>
+    <td><div class="actions icons">
+      ${viewer ? "" : `<button class="btn ghost small" data-act="edit" title="تعديل الاسم" ${dis}>✎ تعديل</button>`}
+      ${t.active ? `<button class="btn ghost small" data-act="reset" title="إعطاء رمز دخول جديد" ${dis}>🔑 رمز جديد</button><button class="btn ghost small" data-act="off" title="منع الدخول مؤقتاً" ${dis}>⏸ إيقاف</button>`
+                 : `<button class="btn ghost small" data-act="on" ${dis}>▶ تفعيل</button>`}
+      <button class="btn ghost small dangerish" data-act="del" title="حذف" ${dis}>🗑 حذف</button>
+    </div></td></tr>`;
+}
+function teachersHTML() {
+  const list = [...teachers].sort((a, b) => SECTIONS.indexOf(a.section) - SECTIONS.indexOf(b.section) || (a.active === b.active ? 0 : a.active ? -1 : 1) || a.name.localeCompare(b.name, "ar"));
+  const formOpen = showAdd || !list.length;
+  return `<div style="display:grid;gap:14px">
+  <div class="row-actions"><div><h2>إدارة المعلمين</h2><p class="sub">${list.length} معلم. لكل معلم اسم مستخدم ورمز دخول وقسم واحد، ولا يرى إلا تلاميذ قسمه.</p></div>
+    ${formOpen ? "" : `<button class="btn" id="tcAddBtn">＋ إضافة معلم</button>`}</div>
+  ${createdCardHTML()}${askDeleteHTML()}
+  ${formOpen ? `<form class="panel" id="tcForm"><h3>＋ إضافة معلم</h3><div class="formgrid">
+    <label class="field">الاسم الكامل<input id="tcName" required maxlength="60"></label>
     <label class="field">اسم المستخدم<input id="tcUser" required autocapitalize="none" spellcheck="false" placeholder="مثال: ahmed"></label>
     <label class="field">القسم<select id="tcSec">${SECTIONS.map(s => `<option>${esc(s)}</option>`).join("")}</select></label>
     <label class="field">رمز الدخول<input id="tcCode" value="${randomCode()}" minlength="6" required></label>
-    <button class="btn" type="submit" id="tcBtn">إنشاء الحساب</button></div><p class="err" id="tcErr" style="color:var(--warn);margin:0"></p></form>
-  <div class="tbl"><table><thead><tr><th>الأستاذ</th><th>اسم المستخدم</th><th>القسم</th><th>الحالة</th><th></th></tr></thead><tbody>
-  ${list.length ? list.map(t => `<tr data-uid="${t.uid}"><td><strong>${esc(t.name)}</strong></td><td><span class="code" style="font-size:.9rem">${esc(t.username)}</span></td>
-    <td>${t.active ? `<select data-sec aria-label="القسم">${SECTIONS.map(s => `<option ${s === t.section ? "selected" : ""}>${esc(s)}</option>`).join("")}</select>` : esc(t.section)}</td>
-    <td><span class="state ${t.active ? "on" : ""}">${t.active ? "مفعّل" : "موقوف"}</span></td>
-    <td><div class="actions">${t.active ? `<button class="btn ghost small" data-reset>رمز جديد</button><button class="btn ghost small" data-off>إيقاف</button>` : `<button class="btn ghost small" data-on>تفعيل</button>`}</div></td></tr>`).join("")
-    : '<tr><td colspan="5" class="empty">لا يوجد أساتذة بعد. أضف أول أستاذ من النموذج أعلاه.</td></tr>'}
-  </tbody></table></div></div>`;
+    <div class="actions"><button class="btn" type="submit" id="tcBtn">إنشاء الحساب</button>${list.length ? `<button class="btn ghost" type="button" id="tcCancel">إلغاء</button>` : ""}</div>
+    </div><p class="err" id="tcErr"></p></form>` : ""}
+  <div class="tbl"><table><thead><tr><th>المعلم</th><th>اسم المستخدم</th><th>القسم</th><th>الحالة</th><th>إجراءات</th></tr></thead><tbody>
+  ${list.length ? list.map(t => memberRowHTML(t, false)).join("") : '<tr><td colspan="5" class="empty">لا يوجد معلمون بعد. أضف أول معلم من النموذج أعلاه.</td></tr>'}
+  </tbody></table></div>
+  ${viewerPanelHTML()}</div>`;
+}
+function viewerPanelHTML() {
+  return `<section class="panel viewerpanel"><h3>👁 حساب مسؤول المدرسة <span class="pend">(مشاهدة فقط)</span></h3>
+    <p class="note">يرى كل النتائج والإحصائيات والأقسام ويطبعها، ولا يستطيع تعديل أي شيء. قاعدة البيانات نفسها ترفض أي تعديل منه.</p>
+    ${viewers.length ? `<div class="tbl"><table><thead><tr><th>الاسم</th><th>اسم المستخدم</th><th>الحالة</th><th>إجراءات</th></tr></thead><tbody>${viewers.map(v => memberRowHTML(v, true)).join("")}</tbody></table></div>` : ""}
+    <form id="vwForm" class="formgrid" style="margin-top:4px">
+      <label class="field">الاسم<input id="vwName" required maxlength="60" value="${viewers.length ? "" : "مسؤول المدرسة"}"></label>
+      <label class="field">اسم المستخدم<input id="vwUser" required autocapitalize="none" spellcheck="false" placeholder="مثال: madrasa"></label>
+      <label class="field">رمز الدخول<input id="vwCode" value="${randomCode()}" minlength="6" required></label>
+      <button class="btn ${viewers.length ? "ghost" : ""}" type="submit" id="vwBtn">${viewers.length ? "＋ حساب مشاهدة آخر" : "إنشاء حساب مسؤول المدرسة"}</button>
+    </form><p class="err" id="vwErr"></p></section>`;
 }
 async function createAccount(email, code) {
-  // a second app instance creates the account without signing the admin out
+  // a second app instance creates the account without signing the manager out
   const app2 = firebase.initializeApp(CFG, "create-" + Date.now());
   try {
     const a2 = app2.auth(); if (window.FIREBASE_EMULATOR) a2.useEmulator("http://127.0.0.1:9099", { disableWarnings: true });
@@ -325,52 +417,109 @@ async function createAccount(email, code) {
     await a2.signOut(); return cred.user.uid;
   } finally { app2.delete().catch(() => {}); }
 }
+async function createMember({ role, name, username, section, code }) {
+  const card = await fs.doc("logins/" + username).get({ source: "server" });
+  if (card.exists) throw new Error("اسم المستخدم مستعمل من قبل، اختر اسماً آخر");
+  const email = newEmail(), uid = await createAccount(email, code), b = fs.batch();
+  b.set(fs.doc("users/" + uid), { role, active: true, name, username, ...(role === "teacher" ? { section } : {}), email, createdAt: TS() });
+  b.set(fs.doc("logins/" + username), { email, active: true });
+  b.set(fs.collection("activity").doc(), logEntry("الكل", "note", `أنشأ حساب ${ROLE_LABEL[role]} «${name}»`, []));
+  await b.commit();
+}
+async function ownsCard(u) { const c = await fs.doc("logins/" + u.username).get({ source: "server" }); return !c.exists || c.data().email === u.email; }
+const memberActions = {
+  async reset(u) { // new account with the same username, role and section; the old code stops working at once
+    const code = randomCode(), email = newEmail(), uid = await createAccount(email, code), b = fs.batch();
+    b.update(fs.doc("users/" + u.uid), { active: false, replacedBy: uid });
+    b.set(fs.doc("users/" + uid), { role: u.role, active: true, name: u.name, username: u.username, ...(u.role === "teacher" ? { section: u.section } : {}), email, createdAt: TS() });
+    b.set(fs.doc("logins/" + u.username), { email, active: true });
+    b.set(fs.collection("activity").doc(), logEntry("الكل", "note", `أعطى رمز دخول جديداً لـ «${u.name}»`, []));
+    await b.commit(); lastCreated = { name: u.name, username: u.username, code, reset: true };
+    return "تم إنشاء رمز جديد. الرمز القديم لم يعد صالحاً.";
+  },
+  async off(u) {
+    const b = fs.batch(); b.update(fs.doc("users/" + u.uid), { active: false });
+    if (await ownsCard(u)) b.set(fs.doc("logins/" + u.username), { email: u.email, active: false });
+    await b.commit(); return "تم إيقاف حساب «" + u.name + "»";
+  },
+  async on(u) {
+    if (!(await ownsCard(u))) throw new Error("اسم المستخدم مستعمل الآن بحساب آخر");
+    const b = fs.batch(); b.update(fs.doc("users/" + u.uid), { active: true }); b.set(fs.doc("logins/" + u.username), { email: u.email, active: true });
+    await b.commit(); return "تم تفعيل حساب «" + u.name + "»";
+  },
+  async del(u) {
+    const b = fs.batch();
+    b.update(fs.doc("users/" + u.uid), { active: false, deleted: true, deletedAt: TS() });
+    if (await ownsCard(u)) b.delete(fs.doc("logins/" + u.username));
+    b.set(fs.collection("activity").doc(), logEntry("الكل", "note", `حذف حساب ${ROLE_LABEL[u.role]} «${u.name}» (النتائج محفوظة)`, []));
+    await b.commit(); askDelete = null; return "تم حذف «" + u.name + "». نتائج التلاميذ لم تتغيّر.";
+  },
+  async rename(u, name) {
+    if (!name) throw new Error("الاسم فارغ");
+    if (nameTaken(name, u.uid)) throw new Error("يوجد معلم آخر بنفس الاسم");
+    if (name === u.name) { editUid = null; return ""; }
+    const b = fs.batch(); b.update(fs.doc("users/" + u.uid), { name });
+    b.set(fs.collection("activity").doc(), logEntry(u.section || "الكل", "note", `غيّر اسم المعلم «${u.name}» إلى «${name}»`, []));
+    await b.commit(); editUid = null; return "تم تعديل الاسم إلى «" + name + "»";
+  },
+};
+async function runMember(fn) {
+  memberBusy = true; render();
+  try { const msg = await fn(); if (msg) notify(msg); } catch (x) { notify(errText(x), false); }
+  memberBusy = false; render();
+}
 function bindTeachers(el) {
+  const add = el.querySelector("#tcAddBtn"); if (add) add.onclick = () => { showAdd = true; render(); el.querySelector("#tcName")?.focus(); };
+  const cancel = el.querySelector("#tcCancel"); if (cancel) cancel.onclick = () => { showAdd = false; render(); };
   const f = el.querySelector("#tcForm");
-  f.onsubmit = async e => {
+  if (f) f.onsubmit = async e => {
     e.preventDefault();
-    const name = $("#tcName").value.trim(), key = loginKey($("#tcUser").value), section = $("#tcSec").value, code = $("#tcCode").value.trim(), err = $("#tcErr"), btn = $("#tcBtn");
+    const name = cleanName($("#tcName").value), key = loginKey($("#tcUser").value), section = $("#tcSec").value, code = $("#tcCode").value.trim(), err = $("#tcErr"), btn = $("#tcBtn");
     err.textContent = "";
+    if (!name) { err.textContent = "اكتب اسم المعلم"; return; }
+    if (nameTaken(name)) { err.textContent = "هذا المعلم موجود في القائمة"; return; }
     if (!validKey(key)) { err.textContent = "اسم المستخدم: من 2 إلى 30 حرفاً أو رقماً، دون مسافات أو رموز خاصة"; return; }
-    if (code.length < 6) { err.textContent = "رمز الدخول 6 أحرف أو أرقام على الأقل"; return; }
+    const weak = codeProblem(code, key); if (weak) { err.textContent = weak; return; }
     btn.disabled = true;
     try {
-      const card = await fs.doc("logins/" + key).get({ source: "server" });
-      if (card.exists) throw new Error("اسم المستخدم مستعمل من قبل، اختر اسماً آخر");
-      const email = newEmail(), uid = await createAccount(email, code), b = fs.batch();
-      b.set(fs.doc("users/" + uid), { role: "teacher", active: true, name, username: key, section, email, createdAt: TS() });
-      b.set(fs.doc("logins/" + key), { email, active: true });
-      await b.commit();
-      lastCreated = { name, username: key, code }; setStatus("تم إنشاء حساب الأستاذ"); render();
-    } catch (e2) { err.textContent = errText(e2); btn.disabled = false; }
+      await createMember({ role: "teacher", name, username: key, section, code });
+      lastCreated = { name, username: key, code }; showAdd = false; notify("تمت إضافة المعلم «" + name + "»"); render();
+    } catch (x) { err.textContent = errText(x); notify("لم تتم الإضافة: " + errText(x), false); btn.disabled = false; }
+  };
+  const vf = el.querySelector("#vwForm");
+  if (vf) vf.onsubmit = async e => {
+    e.preventDefault();
+    const name = cleanName($("#vwName").value), key = loginKey($("#vwUser").value), code = $("#vwCode").value.trim(), err = $("#vwErr"), btn = $("#vwBtn");
+    err.textContent = "";
+    if (!name) { err.textContent = "اكتب الاسم"; return; }
+    if (!validKey(key)) { err.textContent = "اسم المستخدم: من 2 إلى 30 حرفاً أو رقماً، دون مسافات أو رموز خاصة"; return; }
+    const weak = codeProblem(code, key); if (weak) { err.textContent = weak; return; }
+    btn.disabled = true;
+    try { await createMember({ role: ROLE_VIEWER, name, username: key, code }); lastCreated = { name, username: key, code }; notify("تم إنشاء حساب مسؤول المدرسة"); render(); window.scrollTo({ top: 0 }); }
+    catch (x) { err.textContent = errText(x); notify("لم يتم الإنشاء: " + errText(x), false); btn.disabled = false; }
   };
   const copy = el.querySelector("#tcCopy");
   if (copy) copy.onclick = () => { const t = `مسابقة القرآن الكريم\nاسم المستخدم: ${lastCreated.username}\nرمز الدخول: ${lastCreated.code}\n${location.href.split("#")[0]}`;
-    navigator.clipboard.writeText(t).then(() => setStatus("تم النسخ"), () => setStatus("انسخ المعلومات يدوياً", true)); };
+    navigator.clipboard.writeText(t).then(() => notify("تم النسخ"), () => notify("انسخ المعلومات يدوياً", false)); };
   const hide = el.querySelector("#tcHide"); if (hide) hide.onclick = () => { lastCreated = null; render(); };
+  const yes = el.querySelector("#cdYes"), no = el.querySelector("#cdNo");
+  if (no) no.onclick = () => { askDelete = null; render(); };
+  if (yes) yes.onclick = () => { const u = allUsers.find(x => x.uid === askDelete); if (u) runMember(() => memberActions.del(u)); };
   el.querySelectorAll("tr[data-uid]").forEach(tr => {
-    const t = teachers.find(x => x.uid === tr.dataset.uid); if (!t) return;
+    const u = allUsers.find(x => x.uid === tr.dataset.uid); if (!u) return;
     const sel = tr.querySelector("[data-sec]");
-    if (sel) sel.onchange = () => fs.doc("users/" + t.uid).update({ section: sel.value }).then(() => setStatus("تم نقل الأستاذ إلى " + sel.value), e => setStatus(errText(e), true));
-    const off = tr.querySelector("[data-off]"), on = tr.querySelector("[data-on]"), reset = tr.querySelector("[data-reset]");
-    const setActive = v => { const b = fs.batch(); b.update(fs.doc("users/" + t.uid), { active: v }); b.set(fs.doc("logins/" + t.username), { email: t.email, active: v }); return b.commit(); };
-    if (off) off.onclick = () => { if (off.dataset.sure) setActive(false).then(() => setStatus("تم إيقاف الحساب"), e => setStatus(errText(e), true)); else { off.dataset.sure = 1; off.textContent = "تأكيد الإيقاف"; } };
-    if (on) on.onclick = async () => {
-      const card = await fs.doc("logins/" + t.username).get({ source: "server" });
-      if (card.exists && card.data().email !== t.email && card.data().active) { setStatus("اسم المستخدم مستعمل الآن بحساب آخر", true); return; }
-      setActive(true).then(() => setStatus("تم تفعيل الحساب"), e => setStatus(errText(e), true));
-    };
-    if (reset) reset.onclick = async () => {
-      if (!reset.dataset.sure) { reset.dataset.sure = 1; reset.textContent = "تأكيد: رمز جديد"; return; }
-      reset.disabled = true;
-      try { // new account with the same username and section; the old one stops working
-        const code = randomCode(), email = newEmail(), uid = await createAccount(email, code), b = fs.batch();
-        b.update(fs.doc("users/" + t.uid), { active: false });
-        b.set(fs.doc("users/" + uid), { role: "teacher", active: true, name: t.name, username: t.username, section: t.section, email, createdAt: TS() });
-        b.set(fs.doc("logins/" + t.username), { email, active: true });
-        await b.commit(); lastCreated = { name: t.name, username: t.username, code, reset: true }; render();
-      } catch (e) { setStatus(errText(e), true); reset.disabled = false; }
-    };
+    if (sel) sel.onchange = () => fs.doc("users/" + u.uid).update({ section: sel.value }).then(() => notify("تم نقل «" + u.name + "» إلى " + sel.value), x => notify(errText(x), false));
+    tr.querySelectorAll("[data-act]").forEach(b => b.onclick = () => {
+      const act = b.dataset.act;
+      if (act === "edit") { editUid = u.uid; render(); const i = document.getElementById("edName"); if (i) { i.focus(); i.select(); } return; }
+      if (act === "cancel") { editUid = null; render(); return; }
+      if (act === "save") { const name = cleanName(document.getElementById("edName").value); runMember(() => memberActions.rename(u, name)); return; }
+      if (act === "del") { askDelete = u.uid; render(); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
+      if ((act === "reset" || act === "off") && !b.dataset.sure) { b.dataset.sure = 1; b.textContent = act === "reset" ? "تأكيد: رمز جديد" : "تأكيد الإيقاف"; return; }
+      runMember(() => memberActions[act](u));
+    });
+    const ed = tr.querySelector("#edName");
+    if (ed) ed.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); tr.querySelector('[data-act="save"]').click(); } if (e.key === "Escape") { editUid = null; render(); } };
   });
 }
 
@@ -526,4 +675,8 @@ async function importStudents(p) {
   } catch (e) { setStatus("توقف الاستيراد: " + errText(e), true); if (btn) btn.disabled = false; }
 }
 
+window.addEventListener("hashchange", () => {
+  const v = decodeURIComponent(location.hash.slice(1));
+  if (me && v && v !== view && v !== "mycode") go(v);
+});
 boot();
